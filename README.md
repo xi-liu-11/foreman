@@ -95,7 +95,7 @@ then fails the task and notifies you. Every transition is an event row.
 ## Roadmap
 
 1. ~~DB, CLI, taskd, one research task in a herdr tab~~
-2. ~~Block and answer flow end to end~~ (verified with the stub; needs one real run)
+2. ~~Block and answer flow end to end~~ and ~~crash-recovery hardening (fencing, cancel on stale heartbeat, startup grace, result retry, transactions, resume in scheduler)~~
 3. Worktrees and the Spec Kit implement pipeline with the QA loop, `open_pr` and `merge` system steps
 4. Human gates polish, assistant `pa` skill, ticket provider adapters (`task ticket ...`)
 5. Remote machines via `herdr --machine`

@@ -168,6 +168,22 @@ export async function runStep(stepId: number): Promise<void> {
     run_dir: runDir,
   };
   writeFileSync(join(runDir, "report.json"), JSON.stringify(report, null, 2));
-  const ack = await client.post(`/steps/${step.id}/result`, report);
-  console.log(`\n\x1b[1mReported:\x1b[0m ${ack.step_status} (task ${ack.task_status})`);
+
+  // R4: taskd may be restarting. Retry delivery for up to two leases; taskd also
+  // picks up report.json on its own if the lease expires before we get through.
+  const deadline = Date.now() + 2 * (defaults.lease_sec ?? 150) * 1000;
+  let delay = 2000;
+  for (;;) {
+    try {
+      const ack = await client.post(`/steps/${step.id}/result`, report);
+      console.log(`\n\x1b[1mReported:\x1b[0m ${ack.step_status} (task ${ack.task_status})`);
+      return;
+    } catch (e: any) {
+      if (/stale attempt/.test(e.message)) { console.log(`\n\x1b[33mResult ignored by taskd: ${e.message}\x1b[0m`); return; }
+      if (Date.now() > deadline) { console.error(`\x1b[31mCould not deliver result: ${e.message}. Left in ${runDir}/report.json\x1b[0m`); process.exit(2); }
+      console.error(`\x1b[33mresult delivery failed (${e.message}); retrying in ${delay / 1000}s\x1b[0m`);
+      await Bun.sleep(delay);
+      delay = Math.min(delay * 2, 30000);
+    }
+  }
 }

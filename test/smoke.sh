@@ -10,14 +10,17 @@ cat > "$T/config.toml" <<CFG
 port = 7778
 bind = "127.0.0.1"
 token = "testtoken"
+[defaults]
+lease_sec = 5
+heartbeat_sec = 2
 [projects.smoke]
 path = "$ROOT"
 verify = "inspect"
 concurrency = 1
 CFG
 echo done > "$T/mode"
-FOREMAN_HOME="$T" FOREMAN_CLAUDE_BIN="$ROOT/test/fake-claude.sh" "$ROOT/bin/foreman" taskd > "$T/taskd.log" 2>&1 &
-PID=$!
+start_taskd() { FOREMAN_HOME="$T" FOREMAN_CLAUDE_BIN="$ROOT/test/fake-claude.sh" "$ROOT/bin/foreman" taskd >> "$T/taskd.log" 2>&1 & PID=$!; }
+start_taskd
 cleanup() {
   kill $PID 2>/dev/null
   ws=$(herdr workspace list 2>/dev/null | python3 -c 'import json,sys; print(next((w["workspace_id"] for w in json.load(sys.stdin)["result"]["workspaces"] if w["label"]=="fm:smoke"),""))' 2>/dev/null)
@@ -33,5 +36,9 @@ echo "happy path";          "$ROOT/bin/task" create --project smoke --kind resea
 echo "block/answer/resume"; echo block > "$T/mode"; "$ROOT/bin/task" create --project smoke --kind research --title Blocky --brief x >/dev/null; wait_for T0002 blocked; "$ROOT/bin/task" answer 1 "Blue." >/dev/null; wait_for T0002 done
 echo "crash/retry";         echo fail > "$T/mode";  "$ROOT/bin/task" create --project smoke --kind research --title Faily --brief x >/dev/null; wait_for T0003 done
 echo "cancel";              echo block > "$T/mode"; "$ROOT/bin/task" create --project smoke --kind research --title Cancelme --brief x >/dev/null; sleep 1; "$ROOT/bin/task" cancel T0004 >/dev/null; sleep 4; wait_for T0004 cancelled
+echo "taskd outage longer than the lease mid-step"; echo slow > "$T/mode"; "$ROOT/bin/task" create --project smoke --kind research --title Outage --brief x >/dev/null; sleep 3
+kill $PID; wait $PID 2>/dev/null || true; sleep 8; start_taskd; sleep 1.5; wait_for T0005 done
+attempts=$("$ROOT/bin/task" show T0005 --json | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["steps"]))')
+[ "$attempts" = "1" ] && echo "  single attempt survived the outage" || { echo "  expected 1 attempt, got $attempts"; exit 1; }
 "$ROOT/bin/task" ls --all
 echo "smoke test passed"

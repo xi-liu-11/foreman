@@ -1,6 +1,14 @@
 // taskd: the Foreman scheduler daemon. Single writer to the SQLite store,
 // HTTP API for the CLI and workers, and a deterministic tick loop that walks
 // each task's pipeline. No LLM runs here.
+//
+// Resilience rules (see specs/research/crash-recovery-risks-in-taskd.md):
+// - Results and heartbeats are fenced: only the current running attempt counts.
+// - Any runner whose step is no longer running is told to stop on its next heartbeat.
+// - Startup extends every running lease so a long taskd outage does not mass-expire.
+// - Before expiring a lease, a report.json left by the runner is applied as its result.
+// - Multi-write state changes run inside a transaction; herdr side effects come after.
+// - Resume after an answer happens in the scheduler, not in the HTTP handler.
 import { join } from "node:path";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { Store, type TaskRow, type StepRow, now } from "./db";
@@ -12,12 +20,12 @@ const cfg: ForemanConfig = loadConfig();
 const store = new Store();
 let herdrOk = false;
 const cancelRequested = new Set<number>(); // step ids whose runner should stop
-const retryBase = new Map<string, number>(); // "task/step" -> attempt number a manual retry started from
 let ticking = false;
 
 const log = (...a: unknown[]) => console.log(new Date().toISOString().slice(11, 19), ...a);
 const slugify = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48) || "task";
 const addSeconds = (sec: number) => new Date(Date.now() + sec * 1000).toISOString();
+const tx = <T>(fn: () => T): T => store.db.transaction(fn)();
 
 function project(task: TaskRow): ProjectConfig {
   const p = cfg.projects[task.project];
@@ -25,16 +33,43 @@ function project(task: TaskRow): ProjectConfig {
   return p;
 }
 const pipelineSteps = (task: TaskRow) => JSON.parse(task.pipeline) as PipelineStep[];
+const agentDefs = (steps: PipelineStep[]) => steps.flatMap(p => p.type === "parallel" ? p.children : p.type === "agent" ? [p] : []);
+const runDirFor = (task: TaskRow, step: StepRow) => join(RUNS_DIR, task.id, `${step.name}-${step.attempt}`);
+
+// Failures of a step since the user last retried it. Blocked rows and resumed
+// attempts do not count, so block/answer cycles never eat the retry budget.
+function failureCount(task_id: string, name: string): number {
+  const rows = store.stepsForTask(task_id).filter(s => s.name === name);
+  let count = 0;
+  for (const s of rows) {
+    if (s.status === "failed") count++;
+    if (s.resume_prompt?.startsWith("[user-retry]")) count = 0;
+  }
+  return count;
+}
 
 // ---------------------------------------------------------------- scheduler
 
-function expireLeases(): void {
+async function expireLeases(): Promise<void> {
   for (const s of store.runningSteps()) {
-    if (s.lease_until && s.lease_until < now()) {
-      log(`lease expired for ${s.task_id}/${s.name}#${s.attempt}`);
-      store.updateStep(s.id, { status: "failed", finished_at: now(), error: "lease expired: runner stopped heartbeating" });
-      store.event("step.lease_expired", { step: s.name, attempt: s.attempt }, s.task_id, s.id);
+    if (!s.lease_until || s.lease_until >= now()) continue;
+    const task = store.getTask(s.task_id)!;
+    // R4 fallback: the runner may have finished but failed to deliver its result.
+    const reportPath = join(runDirFor(task, s), "report.json");
+    if (existsSync(reportPath)) {
+      try {
+        const body = JSON.parse(readFileSync(reportPath, "utf8"));
+        log(`lease expired for ${s.task_id}/${s.name}#${s.attempt}; applying report.json left by the runner`);
+        store.event("step.result_recovered", { step: s.name, attempt: s.attempt }, s.task_id, s.id);
+        await handleResult(s, body);
+        continue;
+      } catch (e: any) { log(`report.json unreadable for ${s.task_id}/${s.name}#${s.attempt}: ${e.message}`); }
     }
+    log(`lease expired for ${s.task_id}/${s.name}#${s.attempt}`);
+    store.updateStep(s.id, { status: "failed", finished_at: now(), error: "lease expired: runner stopped heartbeating" });
+    store.event("step.lease_expired", { step: s.name, attempt: s.attempt }, s.task_id, s.id);
+    cancelRequested.add(s.id);
+    if (s.tab_id) await herdr.closeTab(s.tab_id, s.machine);
   }
 }
 
@@ -42,8 +77,8 @@ async function tick(): Promise<void> {
   if (ticking) return;
   ticking = true;
   try {
-    expireLeases();
-    for (const task of store.listTasks({ status: ["queued", "running"] })) {
+    await expireLeases();
+    for (const task of store.listTasks({ status: ["queued", "running", "blocked"] })) {
       try { await advance(task); } catch (e: any) { log(`advance ${task.id} failed:`, e.message); store.event("scheduler.error", { error: e.message }, task.id); }
     }
   } finally { ticking = false; }
@@ -61,24 +96,23 @@ async function advance(task: TaskRow): Promise<void> {
   let idx = task.current_step ? steps.findIndex(s => s.name === task.current_step) : 0;
   if (idx < 0) return failTask(task, `current step '${task.current_step}' is not in the pipeline`);
   const ps = steps[idx];
-  const max_attempts = cfg.defaults.max_attempts;
+  const next = () => advance(moveTo(task, steps[idx + 1]?.name ?? "__end__"));
 
   if (ps.type === "agent") {
     const latest = store.latestStep(task.id, ps.name);
     if (!latest) return createStep(task, ps.name, ps.role, 1);
-    if (latest.status === "done") return advance(moveTo(task, steps[idx + 1]?.name ?? "__end__"));
-    if (latest.status === "queued") return tryLaunch(task, latest);
-    if (latest.status === "failed") return retryOrFail(task, latest, ps.role, max_attempts);
-    return; // running, blocked
+    return settle(task, latest, ps.role, next);
   }
 
   if (ps.type === "gate") {
     const latest = store.latestStep(task.id, ps.name);
-    if (latest?.status === "done") return advance(moveTo(task, steps[idx + 1]?.name ?? "__end__"));
+    if (latest?.status === "done") return next();
     if (!latest) {
-      store.insertStep({ task_id: task.id, name: ps.name, role: "user", status: "gate", attempt: 1 });
-      store.updateTask(task.id, { status: "gate" });
-      store.event("task.gate", { gate: ps.name, label: ps.label }, task.id);
+      tx(() => {
+        store.insertStep({ task_id: task.id, name: ps.name, role: "user", status: "gate", attempt: 1 });
+        store.updateTask(task.id, { status: "gate" });
+        store.event("task.gate", { gate: ps.name, label: ps.label }, task.id);
+      });
       await herdr.notify(`${task.id} needs approval`, `${ps.label}: ${task.title}`, "request");
     }
     return;
@@ -89,31 +123,30 @@ async function advance(task: TaskRow): Promise<void> {
     for (const child of ps.children) {
       const latest = store.latestStep(task.id, child.name);
       if (!latest) { await createStep(task, child.name, child.role, 1); allDone = false; continue; }
-      if (latest.status === "queued") { await tryLaunch(task, latest); allDone = false; continue; }
-      if (latest.status === "failed") { await retryOrFail(task, latest, child.role, max_attempts); allDone = false; continue; }
-      if (latest.status !== "done") allDone = false;
+      if (latest.status !== "done") { await settle(task, latest, child.role, async () => {}); allDone = false; }
     }
     if (!allDone) return;
     const verdicts = ps.children.map(c => {
       const s = store.latestStep(task.id, c.name)!;
       const r = s.result ? JSON.parse(s.result) : {};
-      return { name: c.name, verdict: r.verdict ?? "n/a", summary: r.summary ?? "" };
+      return { name: c.name, verdict: r.verdict ?? "n/a" };
     });
     const failed = verdicts.filter(v => v.verdict === "fail");
-    if (!failed.length) return advance(moveTo(task, steps[idx + 1]?.name ?? "__end__"));
+    if (!failed.length) return next();
     const cycles = task.qa_cycles + 1;
-    store.event("task.qa_fail", { cycle: cycles, failed: failed.map(f => f.name) }, task.id);
     if (cycles > cfg.defaults[ps.max_cycles_key]) return failTask(task, `QA failed ${cycles} times; last failures: ${failed.map(f => f.name).join(", ")}`);
-    store.updateTask(task.id, { qa_cycles: cycles });
     const target = steps.find(s => s.name === ps.on_fail);
     if (!target || target.type !== "agent") return failTask(task, `on_fail target '${ps.on_fail}' is not an agent step`);
     const prev = store.latestStep(task.id, target.name);
-    // New attempt row so the target's latest status is 'queued', not 'done'.
-    // QA_FEEDBACK is assembled in the context endpoint from the failed verdicts.
-    store.insertStep({ task_id: task.id, name: target.name, role: target.role, status: "queued", attempt: (prev?.attempt ?? 0) + 1 });
-    // Fresh rows for the QA children on the next cycle are created once the target is done.
-    for (const c of ps.children) { const s = store.latestStep(task.id, c.name)!; store.updateStep(s.id, { status: "skipped" }); }
-    return advance(moveTo(task, target.name));
+    tx(() => {
+      store.event("task.qa_fail", { cycle: cycles, failed: failed.map(f => f.name) }, task.id);
+      store.updateTask(task.id, { qa_cycles: cycles, current_step: target.name, status: "queued" });
+      // New attempt row so the target's latest status is 'queued', not 'done'.
+      // QA_FEEDBACK is assembled in the context endpoint from the failed verdicts.
+      store.insertStep({ task_id: task.id, name: target.name, role: target.role, status: "queued", attempt: (prev?.attempt ?? 0) + 1 });
+      for (const c of ps.children) { const s = store.latestStep(task.id, c.name)!; store.updateStep(s.id, { status: "skipped" }); }
+    });
+    return advance(store.getTask(task.id)!);
   }
 
   if (ps.type === "system") {
@@ -121,20 +154,42 @@ async function advance(task: TaskRow): Promise<void> {
   }
 }
 
-async function retryOrFail(task: TaskRow, failed: StepRow, role: string, max_attempts: number): Promise<void> {
-  if (task.status === "cancelled") return;
-  const base = retryBase.get(`${task.id}/${failed.name}`) ?? 0;
-  if (failed.attempt - base >= max_attempts) return failTask(task, `step '${failed.name}' failed ${failed.attempt - base} times: ${failed.error ?? "unknown error"}`);
-  const resume = failed.session_id
-    ? `Your previous attempt at this step ended without completing (${failed.error ?? "unknown error"}). Continue from where you left off; check the working tree and any tasks.md ticks before redoing work.`
-    : null;
-  await createStep(task, failed.name, role, failed.attempt + 1, failed.session_id, resume);
+// Decide what to do with the latest attempt row of an agent step.
+async function settle(task: TaskRow, latest: StepRow, role: string, onDone: () => Promise<void>): Promise<void> {
+  switch (latest.status) {
+    case "done": return onDone();
+    case "queued": return tryLaunch(task, latest);
+    case "running": return;
+    case "blocked": {
+      // R6: resume lives here. Once every question on this attempt is answered, start the next attempt.
+      if (store.openBlocks(task.id).some(b => b.step_id === latest.id)) return;
+      const answered = store.blocksForStep(latest.id).filter(b => b.answer && b.answer !== "(task cancelled)");
+      if (!answered.length) return;
+      const resume = `The user answered your question(s):\n\n${answered.map(x => `Q: ${x.question}\nA: ${x.answer}`).join("\n\n")}\n\nContinue the step from where you left off.`;
+      await createStep(task, latest.name, role, latest.attempt + 1, latest.session_id, resume);
+      if (latest.tab_id) await herdr.closeTab(latest.tab_id, latest.machine);
+      return;
+    }
+    case "failed": {
+      if (task.status === "cancelled") return;
+      const failures = failureCount(task.id, latest.name);
+      if (failures >= cfg.defaults.max_attempts) return failTask(task, `step '${latest.name}' failed ${failures} times: ${latest.error ?? "unknown error"}`);
+      const resume = latest.session_id
+        ? `Your previous attempt at this step ended without completing (${latest.error ?? "unknown error"}). Continue from where you left off; check the working tree and any tasks.md ticks before redoing work.`
+        : null;
+      return createStep(task, latest.name, role, latest.attempt + 1, latest.session_id, resume);
+    }
+    default: return; // gate, skipped
+  }
 }
 
 async function createStep(task: TaskRow, name: string, role: string, attempt: number, session_id: string | null = null, resume_prompt: string | null = null): Promise<void> {
-  const step = store.insertStep({ task_id: task.id, name, role, status: "queued", attempt, session_id, resume_prompt, machine: project(task).machine ?? null });
-  store.event("step.queued", { step: name, attempt }, task.id, step.id);
-  store.updateTask(task.id, { status: "queued", current_step: task.current_step ?? name });
+  const step = tx(() => {
+    const s = store.insertStep({ task_id: task.id, name, role, status: "queued", attempt, session_id, resume_prompt, machine: project(task).machine ?? null });
+    store.event("step.queued", { step: name, attempt }, task.id, s.id);
+    store.updateTask(task.id, { status: "queued", current_step: task.current_step ?? name });
+    return s;
+  });
   await tryLaunch(store.getTask(task.id)!, step);
 }
 
@@ -143,10 +198,12 @@ async function tryLaunch(task: TaskRow, step: StepRow): Promise<void> {
   if (store.runningCount() >= cfg.defaults.concurrency) return;
   if (store.runningCount(task.project) >= proj.concurrency) return;
   const cwd = task.worktree ?? proj.path;
-  if (!existsSync(cwd)) { store.updateStep(step.id, { status: "failed", error: `cwd missing: ${cwd}` }); return; }
+  if (!existsSync(cwd)) { store.updateStep(step.id, { status: "failed", finished_at: now(), error: `cwd missing: ${cwd}` }); return; }
 
-  store.updateStep(step.id, { status: "running", started_at: now(), lease_until: addSeconds(cfg.defaults.lease_sec) });
-  store.updateTask(task.id, { status: "running" });
+  tx(() => {
+    store.updateStep(step.id, { status: "running", started_at: now(), lease_until: addSeconds(cfg.defaults.lease_sec) });
+    store.updateTask(task.id, { status: "running" });
+  });
   const env: Record<string, string> = {
     FOREMAN_URL: `http://${cfg.server.bind === "0.0.0.0" ? "127.0.0.1" : cfg.server.bind}:${cfg.server.port}`,
     FOREMAN_TOKEN: cfg.server.token,
@@ -163,6 +220,8 @@ async function tryLaunch(task: TaskRow, step: StepRow): Promise<void> {
       const pane = await herdr.launchInTab({ workspace_id: ws, label: `${task.id} ${step.name}`, cwd, env, command, machine: proj.machine });
       store.updateStep(step.id, { workspace_id: pane.workspace_id, tab_id: pane.tab_id, pane_id: pane.pane_id });
     } else {
+      // Fallback without herdr. Known limitation: the child shares taskd's process
+      // group, so a Ctrl-C on taskd also interrupts it (macOS has no setsid).
       const runDir = join(RUNS_DIR, task.id, `${step.name}-${step.attempt}`);
       mkdirSync(runDir, { recursive: true });
       const out = Bun.file(join(runDir, "console.log"));
@@ -180,16 +239,23 @@ async function finishTask(task: TaskRow): Promise<void> {
   const steps = store.stepsForTask(task.id);
   const last = [...steps].reverse().find(s => s.status === "done" && s.result);
   const summary = last?.result ? JSON.parse(last.result).summary : "";
-  store.updateTask(task.id, { status: "done", current_step: null, result: JSON.stringify({ summary }) });
-  store.event("task.done", { summary }, task.id);
+  tx(() => {
+    store.updateTask(task.id, { status: "done", current_step: null, result: JSON.stringify({ summary }) });
+    store.event("task.done", { summary }, task.id);
+  });
   for (const s of steps) if (s.tab_id) await herdr.closeTab(s.tab_id, s.machine);
   await herdr.notify(`${task.id} done`, task.title, "done");
   log(`done ${task.id}`);
 }
 
 async function failTask(task: TaskRow, reason: string): Promise<void> {
-  store.updateTask(task.id, { status: "failed", result: JSON.stringify({ error: reason }) });
-  store.event("task.failed", { reason }, task.id);
+  const running = store.stepsForTask(task.id).filter(s => s.status === "running");
+  tx(() => {
+    store.updateTask(task.id, { status: "failed", result: JSON.stringify({ error: reason }) });
+    store.event("task.failed", { reason }, task.id);
+  });
+  // R2: siblings still running (parallel QA) must stop.
+  for (const s of running) cancelRequested.add(s.id);
   await herdr.notify(`${task.id} failed`, reason, "request");
   log(`failed ${task.id}: ${reason}`);
 }
@@ -207,24 +273,28 @@ async function handleResult(step: StepRow, body: any): Promise<{ step_status: st
   else if (r.is_error || body.exit_code !== 0) { status = "failed"; error = r.subtype ?? r.result ?? body.stderr_tail?.trim().split("\n").pop() ?? `exit ${body.exit_code}`; }
   else if (r.subtype && r.subtype !== "success") { status = "failed"; error = r.subtype; }
   else { status = "failed"; error = "worker ended without structured output"; }
-
   if (task.status === "cancelled") { status = "failed"; error = error ?? "cancelled"; }
 
-  store.updateStep(step.id, {
-    status, finished_at: now(), error,
-    session_id: body.session_id ?? step.session_id,
-    result: so ? JSON.stringify(so) : null,
-    cost_usd: Number(r.total_cost_usd ?? 0), turns: Number(r.num_turns ?? 0),
-    lease_until: null,
+  tx(() => {
+    store.updateStep(step.id, {
+      status, finished_at: now(), error,
+      session_id: body.session_id ?? step.session_id,
+      result: so ? JSON.stringify(so) : null,
+      cost_usd: Number(r.total_cost_usd ?? 0), turns: Number(r.num_turns ?? 0),
+      lease_until: null,
+    });
+    store.event(`step.${status}`, { step: step.name, attempt: step.attempt, cost_usd: r.total_cost_usd ?? 0, turns: r.num_turns ?? 0, error, summary: so?.summary ?? null, verdict: so?.verdict ?? null }, task.id, step.id);
+    const known = new Set(store.artifactsForTask(task.id).map(a => a.path));
+    for (const a of so?.artifacts ?? []) if (a?.path && !known.has(a.path)) { store.insertArtifact(task.id, step.id, a.path, a.kind ?? "file", null); known.add(a.path); }
+    if (status === "blocked") {
+      // Only add a placeholder question when the worker never registered one (answered or open).
+      if (!store.blocksForStep(step.id).length) store.insertBlock(task.id, step.id, so?.summary ?? "Worker reported blocked without a question.");
+      if (task.status !== "cancelled") store.updateTask(task.id, { status: "blocked" });
+    }
   });
-  store.event(`step.${status}`, { step: step.name, attempt: step.attempt, cost_usd: r.total_cost_usd ?? 0, turns: r.num_turns ?? 0, error, summary: so?.summary ?? null, verdict: so?.verdict ?? null }, task.id, step.id);
-  const known = new Set(store.artifactsForTask(task.id).map(a => a.path));
-  for (const a of so?.artifacts ?? []) if (a?.path && !known.has(a.path)) { store.insertArtifact(task.id, step.id, a.path, a.kind ?? "file", null); known.add(a.path); }
   cancelRequested.delete(step.id);
 
-  if (status === "blocked") {
-    if (!store.openBlocks(task.id).some(b => b.step_id === step.id)) store.insertBlock(task.id, step.id, so?.summary ?? "Worker reported blocked without a question.");
-    store.updateTask(task.id, { status: "blocked" });
+  if (status === "blocked" && store.openBlocks(task.id).length) {
     await herdr.notify(`${task.id} is blocked`, store.openBlocks(task.id).map(b => b.question).join(" | ").slice(0, 200), "request");
   } else if (status === "done" && step.tab_id) {
     await herdr.closeTab(step.tab_id, step.machine);
@@ -238,8 +308,8 @@ function stepContext(step: StepRow) {
   const task = store.getTask(step.task_id)!;
   const proj = project(task);
   const ps = pipelineSteps(task);
-  const def = ps.flatMap(p => p.type === "parallel" ? p.children : p.type === "agent" ? [p] : []).find(p => p.name === step.name);
-  const promptName = (def as any)?.prompt ?? step.name;
+  const def = agentDefs(ps).find(p => p.name === step.name);
+  const promptName = def?.prompt ?? step.name;
   const promptFile = join(REPO_ROOT, "prompts", `${promptName}.md`);
   const step_prompt = existsSync(promptFile) ? readFileSync(promptFile, "utf8") : "";
 
@@ -292,8 +362,11 @@ async function route(req: Request): Promise<Response> {
     if (!title || !brief) return bad("title and brief are required");
     let pipeline; try { pipeline = pipelineFor(kind); } catch (e: any) { return bad(e.message); }
     if (pipeline.needs_worktree) return bad(`kind '${kind}' needs worktree support, which arrives in slice 3`);
-    const task = store.insertTask({ id: store.nextTaskId(), project: projName, kind, title, brief, status: "queued", pipeline: JSON.stringify(pipeline.steps), current_step: null, priority: Number(priority ?? 5), branch: null, worktree: null, feature_dir: null, ticket: ticket ?? null, qa_cycles: 0, result: null });
-    store.event("task.created", { kind, title }, task.id);
+    const task = tx(() => {
+      const t = store.insertTask({ id: store.nextTaskId(), project: projName, kind, title, brief, status: "queued", pipeline: JSON.stringify(pipeline.steps), current_step: null, priority: Number(priority ?? 5), branch: null, worktree: null, feature_dir: null, ticket: ticket ?? null, qa_cycles: 0, result: null });
+      store.event("task.created", { kind, title }, t.id);
+      return t;
+    });
     log(`created ${task.id} [${kind}] ${title}`);
     setTimeout(tick, 50);
     return json(task, 201);
@@ -306,33 +379,47 @@ async function route(req: Request): Promise<Response> {
     const task = store.getTask(mm[1]); if (!task) return bad("no such task", 404);
     const action = mm[2];
     if (action === "cancel") {
-      for (const s of store.stepsForTask(task.id)) if (s.status === "running") cancelRequested.add(s.id);
-      for (const b of store.openBlocks(task.id)) store.answerBlock(b.id, "(task cancelled)");
-      store.updateTask(task.id, { status: "cancelled" }); store.event("task.cancelled", {}, task.id);
+      const running = store.stepsForTask(task.id).filter(s => s.status === "running");
+      tx(() => {
+        for (const b of store.openBlocks(task.id)) store.answerBlock(b.id, "(task cancelled)");
+        store.updateTask(task.id, { status: "cancelled" }); store.event("task.cancelled", {}, task.id);
+      });
+      for (const s of running) cancelRequested.add(s.id);
       return json({ ok: true });
     }
     if (action === "approve") {
       if (task.status !== "gate") return bad(`task is ${task.status}, not waiting at a gate`);
       const gate = store.stepsForTask(task.id).find(s => s.status === "gate"); if (!gate) return bad("no open gate step");
-      store.updateStep(gate.id, { status: "done", finished_at: now() }); store.event("task.approved", { gate: gate.name }, task.id, gate.id);
-      store.updateTask(task.id, { status: "running" }); setTimeout(tick, 50);
+      tx(() => {
+        store.updateStep(gate.id, { status: "done", finished_at: now() }); store.event("task.approved", { gate: gate.name }, task.id, gate.id);
+        store.updateTask(task.id, { status: "running" });
+      });
+      setTimeout(tick, 50);
       return json({ ok: true, gate: gate.name });
     }
     if (action === "retry") {
       if (task.status !== "failed") return bad(`task is ${task.status}, not failed`);
       const steps = pipelineSteps(task);
-      const cur = task.current_step ?? steps[0].name;
-      const def = steps.flatMap(p => p.type === "parallel" ? p.children : p.type === "agent" ? [p] : []).find(p => p.name === cur);
-      if (!def) return bad(`cannot retry at step '${cur}'`);
-      const prev = store.latestStep(task.id, cur);
-      for (const s of store.stepsForTask(task.id)) if (s.tab_id && s.status === "failed") { await herdr.closeTab(s.tab_id, s.machine); store.updateStep(s.id, { tab_id: null }); }
-      // Attempt numbers keep climbing across retries so run directories never collide;
-      // the retry budget is reset by counting from a fresh base.
-      store.insertStep({ task_id: task.id, name: cur, role: def.role, status: "queued", attempt: (prev?.attempt ?? 0) + 1, session_id: body.fresh ? null : prev?.session_id ?? null, resume_prompt: body.fresh || !prev?.session_id ? null : "The user asked to retry this step. Continue from where you left off." });
-      retryBase.set(`${task.id}/${cur}`, prev?.attempt ?? 0);
-      store.updateTask(task.id, { status: "running", result: null }); store.event("task.retried", { step: cur, fresh: Boolean(body.fresh) }, task.id);
+      const cur = task.current_step ?? steps[0]?.name ?? null;
+      const group = steps.find(s => s.type === "parallel" && s.name === task.current_step) as any;
+      // R9: retrying at a parallel group re-queues the children whose latest row failed.
+      const targets = group ? group.children.filter((c: any) => store.latestStep(task.id, c.name)?.status === "failed") : agentDefs(steps).filter(d => d.name === cur);
+      if (!targets.length) return bad(`cannot retry at step '${task.current_step}'`);
+      const failedTabs = store.stepsForTask(task.id).filter(s => s.tab_id && s.status === "failed");
+      tx(() => {
+        for (const def of targets) {
+          const prev = store.latestStep(task.id, def.name);
+          // Attempt numbers keep climbing so run directories never collide; the
+          // "[user-retry]" marker resets the failure count for max_attempts.
+          const resume = body.fresh || !prev?.session_id ? "[user-retry]" : "[user-retry] The user asked to retry this step. Continue from where you left off.";
+          store.insertStep({ task_id: task.id, name: def.name, role: def.role, status: "queued", attempt: (prev?.attempt ?? 0) + 1, session_id: body.fresh ? null : prev?.session_id ?? null, resume_prompt: resume });
+        }
+        for (const s of failedTabs) store.updateStep(s.id, { tab_id: null });
+        store.updateTask(task.id, { status: "queued", result: null }); store.event("task.retried", { steps: targets.map((t: any) => t.name), fresh: Boolean(body.fresh) }, task.id);
+      });
+      for (const s of failedTabs) await herdr.closeTab(s.tab_id!, s.machine);
       setTimeout(tick, 50);
-      return json({ ok: true, step: cur });
+      return json({ ok: true, step: targets.map((t: any) => t.name).join(", ") });
     }
     if (action === "note") { store.event("note", { text: String(body.text ?? "") }, task.id, body.step_id ?? null); return json({ ok: true }); }
     if (action === "artifacts") { return json(store.insertArtifact(task.id, body.step_id ?? null, String(body.path), String(body.kind ?? "file"), body.note ?? null), 201); }
@@ -350,31 +437,37 @@ async function route(req: Request): Promise<Response> {
     const b = store.getBlock(Number(mm[1])); if (!b) return bad("no such block", 404);
     if (b.answer) return bad("already answered");
     if (!body.answer) return bad("answer required");
-    store.answerBlock(b.id, String(body.answer));
-    store.event("task.answered", { block: b.id, answer: body.answer }, b.task_id, b.step_id);
+    tx(() => {
+      store.answerBlock(b.id, String(body.answer));
+      store.event("task.answered", { block: b.id, answer: body.answer }, b.task_id, b.step_id);
+    });
+    const remaining = store.openBlocks(b.task_id).filter(x => x.step_id === b.step_id).length;
     const step = store.getStep(b.step_id)!;
-    const remaining = store.openBlocks(b.task_id).filter(x => x.step_id === step.id);
-    if (remaining.length) return json({ ok: true, remaining: remaining.length });
-    if (step.status !== "blocked") return json({ ok: true, note: `step is ${step.status}; answer recorded` });
-    const answered = (store.db.query("SELECT * FROM blocks WHERE step_id = ? AND answer IS NOT NULL ORDER BY id").all(step.id) as any[]);
-    const resume = `The user answered your question(s):\n\n${answered.map(x => `Q: ${x.question}\nA: ${x.answer}`).join("\n\n")}\n\nContinue the step from where you left off.`;
-    const task = store.getTask(b.task_id)!;
-    await createStep(task, step.name, step.role, step.attempt + 1, step.session_id, resume);
-    if (step.tab_id) await herdr.closeTab(step.tab_id, step.machine);
-    return json({ ok: true, resumed: true });
+    setTimeout(tick, 50); // the scheduler creates the resume attempt once the step is blocked with no open questions
+    return json({ ok: true, remaining, resumed: remaining === 0 && step.status === "blocked", note: step.status === "running" ? "worker still running; it will be resumed with this answer after it reports blocked" : undefined });
   }
   if ((mm = m(/^\/steps\/(\d+)\/context$/)) && req.method === "GET") {
     const step = store.getStep(Number(mm[1])); if (!step) return bad("no such step", 404);
-    return json(stepContext(step));
+    const s = { ...step, resume_prompt: step.resume_prompt?.replace(/^\[user-retry\]\s*/, "") || null };
+    return json(stepContext(s));
   }
   if ((mm = m(/^\/steps\/(\d+)\/heartbeat$/)) && req.method === "POST") {
     const step = store.getStep(Number(mm[1])); if (!step) return bad("no such step", 404);
-    if (step.status === "running") store.updateStep(step.id, { lease_until: addSeconds(cfg.defaults.lease_sec) });
-    return json({ ok: true, cancel: cancelRequested.has(step.id) || store.getTask(step.task_id)?.status === "cancelled" });
+    const task = store.getTask(step.task_id)!;
+    // R2: anything that is not the current running attempt of an active task must stop.
+    const stale = step.status !== "running" || store.latestStep(task.id, step.name)?.id !== step.id || !["running", "queued", "blocked"].includes(task.status);
+    if (!stale) store.updateStep(step.id, { lease_until: addSeconds(cfg.defaults.lease_sec) });
+    return json({ ok: true, cancel: stale || cancelRequested.has(step.id) });
   }
   if ((mm = m(/^\/steps\/(\d+)\/result$/)) && req.method === "POST") {
     const step = store.getStep(Number(mm[1])); if (!step) return bad("no such step", 404);
-    if (step.status !== "running" && step.status !== "failed") return bad(`step is ${step.status}; result ignored`);
+    // R1: fence late results from attempts that have already been superseded.
+    const current = store.latestStep(step.task_id, step.name);
+    if (step.status !== "running" || current?.id !== step.id) {
+      store.event("step.late_result", { step: step.name, attempt: step.attempt, status: step.status, session_id: body.session_id ?? null }, step.task_id, step.id);
+      log(`late result ignored for ${step.task_id}/${step.name}#${step.attempt} (status ${step.status})`);
+      return json({ error: "stale attempt; result recorded as late and ignored", step_status: step.status, task_status: store.getTask(step.task_id)!.status }, 409);
+    }
     return json(await handleResult(step, body));
   }
   return bad("not found", 404);
@@ -384,6 +477,12 @@ async function route(req: Request): Promise<Response> {
 
 export async function main(): Promise<void> {
   herdrOk = await herdr.herdrAvailable();
+  // R3: a long outage must not expire every live lease on the first tick.
+  const live = store.runningSteps();
+  if (live.length) {
+    for (const s of live) store.updateStep(s.id, { lease_until: addSeconds(cfg.defaults.lease_sec) });
+    log(`startup: extended ${live.length} running lease(s) by ${cfg.defaults.lease_sec}s`);
+  }
   const server = Bun.serve({
     hostname: cfg.server.bind, port: cfg.server.port,
     fetch: (req) => route(req).catch((e: any) => { log("request error:", e.message); return bad(e.message, 500); }),

@@ -231,6 +231,9 @@ export class Store {
     if (task_id) return this.db.query("SELECT * FROM blocks WHERE answer IS NULL AND task_id = ? ORDER BY id").all(task_id) as BlockRow[];
     return this.db.query("SELECT * FROM blocks WHERE answer IS NULL ORDER BY id").all() as BlockRow[];
   }
+  blocksForStep(step_id: number): BlockRow[] {
+    return this.db.query("SELECT * FROM blocks WHERE step_id = ? ORDER BY id").all(step_id) as BlockRow[];
+  }
   answerBlock(id: number, answer: string): void {
     this.db.run("UPDATE blocks SET answer = ?, answered_at = ? WHERE id = ?", [answer, now(), id]);
   }

@@ -11,6 +11,7 @@ case $mode in
   block) task block "Which colour should the button be?" >/dev/null 2>&1
          so='{"status":"blocked","summary":"Need the button colour.","verdict":"n/a","artifacts":[],"notes_for_next":""}' ;;
   fail)  echo "fake crash" >&2; exit 1 ;;
+  slow)  sleep 12; so='{"status":"done","summary":"Slow but done.","verdict":"n/a","artifacts":[],"notes_for_next":""}' ;;
   resumed) so='{"status":"done","summary":"Resumed and finished.","verdict":"n/a","artifacts":[],"notes_for_next":""}' ;;
   *)     task note "fake milestone" >/dev/null 2>&1
          so='{"status":"done","summary":"Fake report written.","verdict":"n/a","artifacts":[{"path":"specs/research/fake.md","kind":"report"}],"notes_for_next":""}' ;;
