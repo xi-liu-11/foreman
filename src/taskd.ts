@@ -381,7 +381,7 @@ function stepContext(step: StepRow) {
     TASK_ID: task.id, TASK_TITLE: task.title, STEP_NAME: step.name, ATTEMPT: String(step.attempt),
     PROJECT: task.project, CWD: task.worktree ?? proj.path, VERIFY: proj.verify,
     PROJECT_NOTES: proj.notes ? `- Project notes: ${proj.notes}` : "",
-    SLUG: slugify(task.title), FEATURE: task.feature_dir ?? "", BASE_BRANCH: proj.base_branch,
+    SLUG: slugify(task.title), FEATURE: (task.feature_dir ?? "").replace(/^specs\//, ""), BASE_BRANCH: proj.base_branch,
     QA_CYCLE: String(task.qa_cycles + 1), QA_FEEDBACK: qaFeedback,
   };
   return { step, task, project: proj, defaults: cfg.defaults, deny: denyListFor(cfg, proj), prompt_vars, step_prompt };
