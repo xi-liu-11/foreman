@@ -56,9 +56,9 @@ function moveTo(task: TaskRow, name: string | null): TaskRow {
 
 async function advance(task: TaskRow): Promise<void> {
   const steps = pipelineSteps(task);
+  if (task.current_step === "__end__") return finishTask(task);
   let idx = task.current_step ? steps.findIndex(s => s.name === task.current_step) : 0;
-  if (idx < 0) idx = 0;
-  if (idx >= steps.length) return finishTask(task);
+  if (idx < 0) return failTask(task, `current step '${task.current_step}' is not in the pipeline`);
   const ps = steps[idx];
   const max_attempts = cfg.defaults.max_attempts;
 
@@ -132,7 +132,7 @@ async function retryOrFail(task: TaskRow, failed: StepRow, role: string, max_att
 async function createStep(task: TaskRow, name: string, role: string, attempt: number, session_id: string | null = null, resume_prompt: string | null = null): Promise<void> {
   const step = store.insertStep({ task_id: task.id, name, role, status: "queued", attempt, session_id, resume_prompt, machine: project(task).machine ?? null });
   store.event("step.queued", { step: name, attempt }, task.id, step.id);
-  if (task.status !== "running") store.updateTask(task.id, { status: "running" });
+  store.updateTask(task.id, { status: "queued", current_step: task.current_step ?? name });
   await tryLaunch(store.getTask(task.id)!, step);
 }
 
@@ -144,12 +144,16 @@ async function tryLaunch(task: TaskRow, step: StepRow): Promise<void> {
   if (!existsSync(cwd)) { store.updateStep(step.id, { status: "failed", error: `cwd missing: ${cwd}` }); return; }
 
   store.updateStep(step.id, { status: "running", started_at: now(), lease_until: addSeconds(cfg.defaults.lease_sec) });
-  const env = {
+  store.updateTask(task.id, { status: "running" });
+  const env: Record<string, string> = {
     FOREMAN_URL: `http://${cfg.server.bind === "0.0.0.0" ? "127.0.0.1" : cfg.server.bind}:${cfg.server.port}`,
     FOREMAN_TOKEN: cfg.server.token,
     FOREMAN_TASK: task.id,
     FOREMAN_STEP: String(step.id),
   };
+  // Test hook: substitute a stub for the claude binary (see README, Testing).
+  if (process.env.FOREMAN_CLAUDE_BIN) env.FOREMAN_CLAUDE_BIN = process.env.FOREMAN_CLAUDE_BIN;
+  if (process.env.FOREMAN_HOME) env.FOREMAN_HOME = process.env.FOREMAN_HOME;
   const command = [join(REPO_ROOT, "bin", "foreman"), "run-step", String(step.id)];
   try {
     if (herdrOk) {
@@ -300,6 +304,7 @@ async function route(req: Request): Promise<Response> {
     const action = mm[2];
     if (action === "cancel") {
       for (const s of store.stepsForTask(task.id)) if (s.status === "running") cancelRequested.add(s.id);
+      for (const b of store.openBlocks(task.id)) store.answerBlock(b.id, "(task cancelled)");
       store.updateTask(task.id, { status: "cancelled" }); store.event("task.cancelled", {}, task.id);
       return json({ ok: true });
     }

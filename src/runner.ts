@@ -94,7 +94,7 @@ export async function runStep(stepId: number): Promise<void> {
   // merge, deploy, destructive git, production data) is the guard rail.
   const permissionMode = defaults.permission_mode ?? "bypassPermissions";
   const args = [
-    "claude", "-p",
+    process.env.FOREMAN_CLAUDE_BIN ?? "claude", "-p",
     "--model", defaults.orchestrator_model,
     "--output-format", "stream-json", "--verbose",
     "--permission-mode", permissionMode,
