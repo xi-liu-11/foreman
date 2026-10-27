@@ -136,7 +136,6 @@ result POST, and `db.transaction` around each multi-write change.
 - **Probing processes/tabs on restart:** more accurate than a grace period, but taskd stores no PIDs and
   herdr tabs may be on other machines. The grace period plus report.json covers most of it.
 - **Event-sourcing state from `events`:** too large a change for now; `db.transaction` is enough.
-
 ## Recommendation
 Order: R1+R2 (fencing, cancel on stale heartbeat), R3 (startup grace), R5 (transactions), R6 (resume in
 the scheduler), R4 (result retry plus report.json), R7/R8 together (shared attempt model), then R9, R10.
@@ -147,4 +146,4 @@ R1-R3 are a few dozen lines in `taskd.ts`. Add a smoke test that kills taskd mid
   process? This decides whether R2's "close tab on expiry" is reliable.
 - When a stale attempt finishes successfully (R1), should its work ever be used (e.g. if the retry fails
   later), or always thrown away? This report assumes it is thrown away.
-- Does Bun.spawn in the pinned Bun version support a detached/new-session option (R10)? Not checked.
+- Does the pinned Bun's `Bun.spawn` offer a detached/new-session option (R10)? Not checked.
