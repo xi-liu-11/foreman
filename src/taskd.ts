@@ -12,6 +12,7 @@ const cfg: ForemanConfig = loadConfig();
 const store = new Store();
 let herdrOk = false;
 const cancelRequested = new Set<number>(); // step ids whose runner should stop
+const retryBase = new Map<string, number>(); // "task/step" -> attempt number a manual retry started from
 let ticking = false;
 
 const log = (...a: unknown[]) => console.log(new Date().toISOString().slice(11, 19), ...a);
@@ -122,7 +123,8 @@ async function advance(task: TaskRow): Promise<void> {
 
 async function retryOrFail(task: TaskRow, failed: StepRow, role: string, max_attempts: number): Promise<void> {
   if (task.status === "cancelled") return;
-  if (failed.attempt >= max_attempts) return failTask(task, `step '${failed.name}' failed ${failed.attempt} times: ${failed.error ?? "unknown error"}`);
+  const base = retryBase.get(`${task.id}/${failed.name}`) ?? 0;
+  if (failed.attempt - base >= max_attempts) return failTask(task, `step '${failed.name}' failed ${failed.attempt - base} times: ${failed.error ?? "unknown error"}`);
   const resume = failed.session_id
     ? `Your previous attempt at this step ended without completing (${failed.error ?? "unknown error"}). Continue from where you left off; check the working tree and any tasks.md ticks before redoing work.`
     : null;
@@ -216,7 +218,8 @@ async function handleResult(step: StepRow, body: any): Promise<{ step_status: st
     lease_until: null,
   });
   store.event(`step.${status}`, { step: step.name, attempt: step.attempt, cost_usd: r.total_cost_usd ?? 0, turns: r.num_turns ?? 0, error, summary: so?.summary ?? null, verdict: so?.verdict ?? null }, task.id, step.id);
-  for (const a of so?.artifacts ?? []) if (a?.path) store.insertArtifact(task.id, step.id, a.path, a.kind ?? "file", null);
+  const known = new Set(store.artifactsForTask(task.id).map(a => a.path));
+  for (const a of so?.artifacts ?? []) if (a?.path && !known.has(a.path)) { store.insertArtifact(task.id, step.id, a.path, a.kind ?? "file", null); known.add(a.path); }
   cancelRequested.delete(step.id);
 
   if (status === "blocked") {
@@ -322,7 +325,11 @@ async function route(req: Request): Promise<Response> {
       const def = steps.flatMap(p => p.type === "parallel" ? p.children : p.type === "agent" ? [p] : []).find(p => p.name === cur);
       if (!def) return bad(`cannot retry at step '${cur}'`);
       const prev = store.latestStep(task.id, cur);
-      store.insertStep({ task_id: task.id, name: cur, role: def.role, status: "queued", attempt: 1, session_id: body.fresh ? null : prev?.session_id ?? null, resume_prompt: body.fresh || !prev?.session_id ? null : "The user asked to retry this step. Continue from where you left off." });
+      for (const s of store.stepsForTask(task.id)) if (s.tab_id && s.status === "failed") { await herdr.closeTab(s.tab_id, s.machine); store.updateStep(s.id, { tab_id: null }); }
+      // Attempt numbers keep climbing across retries so run directories never collide;
+      // the retry budget is reset by counting from a fresh base.
+      store.insertStep({ task_id: task.id, name: cur, role: def.role, status: "queued", attempt: (prev?.attempt ?? 0) + 1, session_id: body.fresh ? null : prev?.session_id ?? null, resume_prompt: body.fresh || !prev?.session_id ? null : "The user asked to retry this step. Continue from where you left off." });
+      retryBase.set(`${task.id}/${cur}`, prev?.attempt ?? 0);
       store.updateTask(task.id, { status: "running", result: null }); store.event("task.retried", { step: cur, fresh: Boolean(body.fresh) }, task.id);
       setTimeout(tick, 50);
       return json({ ok: true, step: cur });

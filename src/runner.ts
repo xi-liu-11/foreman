@@ -104,10 +104,11 @@ export async function runStep(stepId: number): Promise<void> {
     "--append-system-prompt-file", join(runDir, "system.md"),
     "--name", `${task.id}:${step.name}`,
   ];
-  if (ctx.deny.length) args.push("--disallowedTools", ...ctx.deny);
+  // --disallowedTools is variadic, so it must be one comma-joined argument and
+  // the prompt goes over stdin, never as a trailing positional.
+  if (ctx.deny.length) args.push("--disallowedTools", ctx.deny.join(","));
   if (step.resume_prompt && step.session_id) args.push("--resume", step.session_id);
-  args.push(userPrompt);
-  writeFileSync(join(runDir, "command.txt"), args.map(a => /\s/.test(a) ? JSON.stringify(a) : a).join(" "));
+  writeFileSync(join(runDir, "command.txt"), args.map(a => /\s/.test(a) ? JSON.stringify(a) : a).join(" ") + "  < prompt.md");
 
   console.log(`\x1b[1mForeman\x1b[0m ${task.id} ${step.name} (attempt ${step.attempt}) in ${cwd}`);
   console.log(`\x1b[2mrun dir: ${runDir}\x1b[0m\n`);
@@ -118,7 +119,7 @@ export async function runStep(stepId: number): Promise<void> {
     FOREMAN_TASK: task.id, FOREMAN_STEP: String(step.id),
     FOREMAN_RUN_DIR: runDir,
   };
-  const proc = Bun.spawn(args, { cwd, env, stdout: "pipe", stderr: "pipe", stdin: "ignore" });
+  const proc = Bun.spawn(args, { cwd, env, stdout: "pipe", stderr: "pipe", stdin: new Blob([userPrompt]) });
 
   const transcript = join(runDir, "transcript.jsonl");
   const stderrLog = join(runDir, "stderr.log");
