@@ -92,8 +92,8 @@ async function taskMain(): Promise<void> {
       const tasks: any[] = await client.get(`/tasks?${q}`);
       out(tasks, () => {
         if (!tasks.length) return "no tasks";
-        const head = `${pad("ID", 6)} ${pad("STATUS", 9)} ${pad("PROJECT", 14)} ${pad("KIND", 10)} ${pad("STEP", 14)} ${pad("AGE", 5)} ${pad("COST", 7)} ${pad("Q", 2)} TITLE`;
-        return [head, ...tasks.map(t => `${pad(t.id, 6)} ${pad(t.status, 9)} ${pad(t.project, 14)} ${pad(t.kind, 10)} ${pad(t.current_step ?? "", 14)} ${pad(ago(t.created_at), 5)} ${pad("$" + t.cost_usd.toFixed(2), 7)} ${pad(t.open_blocks || "", 2)} ${t.title}`)].join("\n");
+        const head = `${pad("ID", 6)} ${pad("STATUS", 9)} ${pad("PROJECT", 14)} ${pad("KIND", 14)} ${pad("STEP", 14)} ${pad("AGE", 5)} ${pad("COST", 7)} ${pad("Q", 2)} TITLE`;
+        return [head, ...tasks.map(t => `${pad(t.id, 6)} ${pad(t.status, 9)} ${pad(t.project, 14)} ${pad(t.kind, 14)} ${pad(t.current_step ?? "", 14)} ${pad(ago(t.created_at), 5)} ${pad("$" + t.cost_usd.toFixed(2), 7)} ${pad(t.open_blocks || "", 2)} ${t.title}`)].join("\n");
       });
       return;
     }
@@ -107,6 +107,7 @@ async function taskMain(): Promise<void> {
           `status: ${t.status}   project: ${t.project}   step: ${t.current_step ?? "-"}   qa cycles: ${t.qa_cycles}`,
           t.worktree ? `worktree: ${t.worktree} (${t.branch})` : "",
           t.ticket ? `ticket: ${t.ticket}` : "",
+          t.pr_url ? `pr: ${t.pr_url}` : "",
           "", "brief:", t.brief.split("\n").map((l: string) => "  " + l).join("\n"), "",
           "steps:",
           ...d.steps.map((s: any) => {

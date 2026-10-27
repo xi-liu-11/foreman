@@ -20,6 +20,7 @@ export interface TaskRow {
   worktree: string | null;
   feature_dir: string | null;
   ticket: string | null;
+  pr_url: string | null;
   qa_cycles: number;
   result: string | null;  // JSON final summary
   created_at: string;
@@ -141,6 +142,13 @@ export class Store {
     ensureHome();
     this.db = new Database(path, { create: true });
     this.db.exec(SCHEMA);
+    this.migrate();
+  }
+
+  // Additive migrations: add columns that older databases lack.
+  private migrate(): void {
+    const cols = new Set((this.db.query("PRAGMA table_info(tasks)").all() as { name: string }[]).map(c => c.name));
+    if (!cols.has("pr_url")) this.db.exec("ALTER TABLE tasks ADD COLUMN pr_url TEXT");
   }
 
   event(type: string, data: Record<string, unknown> = {}, task_id: string | null = null, step_id: number | null = null): void {
@@ -178,9 +186,9 @@ export class Store {
   }
   insertTask(t: Omit<TaskRow, "created_at" | "updated_at">): TaskRow {
     const ts = now();
-    this.db.run(`INSERT INTO tasks (id, project, kind, title, brief, status, pipeline, current_step, priority, branch, worktree, feature_dir, ticket, qa_cycles, result, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [t.id, t.project, t.kind, t.title, t.brief, t.status, t.pipeline, t.current_step, t.priority, t.branch, t.worktree, t.feature_dir, t.ticket, t.qa_cycles, t.result, ts, ts]);
+    this.db.run(`INSERT INTO tasks (id, project, kind, title, brief, status, pipeline, current_step, priority, branch, worktree, feature_dir, ticket, pr_url, qa_cycles, result, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [t.id, t.project, t.kind, t.title, t.brief, t.status, t.pipeline, t.current_step, t.priority, t.branch, t.worktree, t.feature_dir, t.ticket, t.pr_url, t.qa_cycles, t.result, ts, ts]);
     return this.getTask(t.id)!;
   }
   updateTask(id: string, patch: Partial<TaskRow>): void {

@@ -15,6 +15,7 @@ import { Store, type TaskRow, type StepRow, now } from "./db";
 import { loadConfig, denyListFor, REPO_ROOT, RUNS_DIR, type ForemanConfig, type ProjectConfig } from "./config";
 import { pipelineFor, type PipelineStep } from "./pipelines";
 import * as herdr from "./herdr";
+import * as git from "./git";
 
 const cfg: ForemanConfig = loadConfig();
 const store = new Store();
@@ -122,7 +123,8 @@ async function advance(task: TaskRow): Promise<void> {
     let allDone = true;
     for (const child of ps.children) {
       const latest = store.latestStep(task.id, child.name);
-      if (!latest) { await createStep(task, child.name, child.role, 1); allDone = false; continue; }
+      // A 'skipped' row is a previous QA cycle; the new cycle needs a fresh attempt.
+      if (!latest || latest.status === "skipped") { await createStep(task, child.name, child.role, (latest?.attempt ?? 0) + 1); allDone = false; continue; }
       if (latest.status !== "done") { await settle(task, latest, child.role, async () => {}); allDone = false; }
     }
     if (!allDone) return;
@@ -150,7 +152,54 @@ async function advance(task: TaskRow): Promise<void> {
   }
 
   if (ps.type === "system") {
-    return failTask(task, `system step '${ps.action}' is not implemented yet (slice 3)`);
+    const latest = store.latestStep(task.id, ps.name);
+    if (latest?.status === "done") return next();
+    if (latest?.status === "running") return;
+    if (latest?.status === "failed" && failureCount(task.id, ps.name) >= cfg.defaults.max_attempts) {
+      return failTask(task, `system step '${ps.name}' failed ${failureCount(task.id, ps.name)} times: ${latest.error}`);
+    }
+    return runSystem(task, ps, (latest?.attempt ?? 0) + 1);
+  }
+}
+
+// System steps run inside taskd: push and open the PR, or merge it.
+async function runSystem(task: TaskRow, ps: Extract<PipelineStep, { type: "system" }>, attempt: number): Promise<void> {
+  const proj = project(task);
+  const step = tx(() => {
+    const s = store.insertStep({ task_id: task.id, name: ps.name, role: "system", status: "running", attempt });
+    store.updateTask(task.id, { status: "running" });
+    store.event("step.started", { step: ps.name, attempt, system: true }, task.id, s.id);
+    return s;
+  });
+  try {
+    if (!task.worktree || !task.branch) throw new Error("task has no worktree");
+    let summary: string;
+    if (ps.action === "open_pr") {
+      const bodyFile = task.feature_dir ? join(task.worktree, task.feature_dir, "pr.md") : null;
+      const url = await git.pushAndOpenPr(proj, task.worktree, task.branch, task.title, bodyFile);
+      store.updateTask(task.id, { pr_url: url });
+      summary = `PR opened: ${url}`;
+      await herdr.notify(`${task.id} PR opened`, url, "done");
+    } else {
+      if (!task.pr_url) throw new Error("no PR URL recorded; open_pr must run first");
+      await git.mergePr(proj, task.worktree, task.pr_url);
+      await git.removeWorktree(proj, task.worktree);
+      summary = `Merged ${task.pr_url} and removed worktree`;
+    }
+    tx(() => {
+      store.updateStep(step.id, { status: "done", finished_at: now(), result: JSON.stringify({ status: "done", summary, verdict: "n/a", artifacts: [], notes_for_next: "" }) });
+      store.event("step.done", { step: ps.name, attempt, summary }, task.id, step.id);
+    });
+    log(`system ${task.id}/${ps.name}: ${summary}`);
+    setTimeout(tick, 50);
+  } catch (e: any) {
+    tx(() => {
+      store.updateStep(step.id, { status: "failed", finished_at: now(), error: e.message });
+      store.event("step.failed", { step: ps.name, attempt, error: e.message }, task.id, step.id);
+    });
+    log(`system ${task.id}/${ps.name} failed: ${e.message}`);
+    // Let the user fix the cause (remote, auth, dirty tree) rather than hammering git.
+    await failTask(task, `${ps.name}: ${e.message}`);
   }
 }
 
@@ -209,7 +258,10 @@ async function tryLaunch(task: TaskRow, step: StepRow): Promise<void> {
     FOREMAN_TOKEN: cfg.server.token,
     FOREMAN_TASK: task.id,
     FOREMAN_STEP: String(step.id),
+    FOREMAN_STEP_NAME: step.name,
   };
+  // Spec Kit helpers resolve the feature from this when the checkout is a worktree.
+  if (task.feature_dir && proj.speckit) env.SPECIFY_FEATURE = task.feature_dir.replace(/^specs\//, "");
   // Test hook: substitute a stub for the claude binary (see README, Testing).
   if (process.env.FOREMAN_CLAUDE_BIN) env.FOREMAN_CLAUDE_BIN = process.env.FOREMAN_CLAUDE_BIN;
   if (process.env.FOREMAN_HOME) env.FOREMAN_HOME = process.env.FOREMAN_HOME;
@@ -360,11 +412,19 @@ async function route(req: Request): Promise<Response> {
     const { project: projName, kind, title, brief, priority, ticket } = body;
     if (!cfg.projects[projName]) return bad(`unknown project '${projName}'. Known: ${Object.keys(cfg.projects).join(", ") || "(none; add one to config.toml)"}`);
     if (!title || !brief) return bad("title and brief are required");
-    let pipeline; try { pipeline = pipelineFor(kind); } catch (e: any) { return bad(e.message); }
-    if (pipeline.needs_worktree) return bad(`kind '${kind}' needs worktree support, which arrives in slice 3`);
+    const proj = cfg.projects[projName];
+    let pipeline; try { pipeline = pipelineFor(kind, proj.speckit); } catch (e: any) { return bad(e.message); }
+    const id = store.nextTaskId();
+    let wt: git.WorktreeInfo | null = null;
+    if (pipeline.needs_worktree) {
+      try {
+        const featureNumber = proj.speckit ? store.nextFeatureNumber(projName, await git.highestFeatureNumber(proj.path)) : null;
+        wt = await git.setupWorktree(cfg, proj, id, title, featureNumber);
+      } catch (e: any) { return bad(`could not prepare worktree: ${e.message}`); }
+    }
     const task = tx(() => {
-      const t = store.insertTask({ id: store.nextTaskId(), project: projName, kind, title, brief, status: "queued", pipeline: JSON.stringify(pipeline.steps), current_step: null, priority: Number(priority ?? 5), branch: null, worktree: null, feature_dir: null, ticket: ticket ?? null, qa_cycles: 0, result: null });
-      store.event("task.created", { kind, title }, t.id);
+      const t = store.insertTask({ id, project: projName, kind: pipeline.kind, title, brief, status: "queued", pipeline: JSON.stringify(pipeline.steps), current_step: null, priority: Number(priority ?? 5), branch: wt?.branch ?? null, worktree: wt?.worktree ?? null, feature_dir: wt?.feature_dir ?? null, ticket: ticket ?? null, pr_url: null, qa_cycles: 0, result: null });
+      store.event("task.created", { kind: pipeline.kind, title, branch: wt?.branch ?? null, worktree: wt?.worktree ?? null }, t.id);
       return t;
     });
     log(`created ${task.id} [${kind}] ${title}`);
@@ -427,6 +487,7 @@ async function route(req: Request): Promise<Response> {
       if (!body.question) return bad("question required");
       const b = store.insertBlock(task.id, Number(body.step_id), String(body.question));
       store.event("task.blocked", { question: body.question }, task.id, b.step_id);
+      if (["cancelled", "failed", "done"].includes(task.status)) store.answerBlock(b.id, `(task ${task.status})`);
       return json(b, 201);
     }
   }

@@ -74,7 +74,18 @@ Run artifacts live under `~/.foreman/runs/<task>/<step>-<attempt>/`:
 | research | researcher writes `specs/research/<slug>.md` | no |
 | design | architect writes `specs/design/<slug>.md` | no |
 | triage | test analyst writes `specs/triage/<slug>.md` | no |
-| implement | Spec Kit: specify, plan, plan QA, gate, implement, review and test loop, pr, gate, merge | yes (slice 3) |
+| implement | Spec Kit project: specify, plan, plan QA, **gate**, implement, review and test loop, pr, open PR, **gate**, merge | yes |
+| implement (project without Spec Kit) | plan, **gate**, implement, review and test loop, pr, open PR, **gate**, merge | yes |
+
+For `implement`, the scheduler creates the worktree at
+`~/git/.worktrees/<project>/<branch>` from the project's `base_branch`, allocates
+the Spec Kit feature number from the DB (so parallel features never collide),
+seeds `specs/NNN-name/spec.md` from the template, and exports `SPECIFY_FEATURE`
+to the workers. The `pr` step writes `specs/<feature>/pr.md`; the scheduler then
+pushes the branch and opens the PR with `gh`. After `task approve` at the merge
+gate it squash-merges, deletes the branch, and removes the worktree. QA can send
+the task back to `implement` up to `max_qa_cycles` times; the failed review and
+test summaries are injected into the next implement prompt.
 
 Pipelines are data in `src/pipelines.ts`. Role prompts are in `roles/`, step
 prompts in `prompts/`, and the worker protocol in `prompts/worker-preamble.md`.
@@ -96,7 +107,7 @@ then fails the task and notifies you. Every transition is an event row.
 
 1. ~~DB, CLI, taskd, one research task in a herdr tab~~
 2. ~~Block and answer flow end to end~~ and ~~crash-recovery hardening (fencing, cancel on stale heartbeat, startup grace, result retry, transactions, resume in scheduler)~~
-3. Worktrees and the Spec Kit implement pipeline with the QA loop, `open_pr` and `merge` system steps
+3. ~~Worktrees and the Spec Kit implement pipeline with the QA loop, `open_pr` and `merge` system steps~~ (stub-verified; needs one real run)
 4. Human gates polish, assistant `pa` skill, ticket provider adapters (`task ticket ...`)
 5. Remote machines via `herdr --machine`
 6. Retro loop over transcripts
@@ -105,6 +116,7 @@ then fails the task and notifies you. Every transition is an event row.
 ## Testing
 
 `test/smoke.sh` runs an isolated taskd on port 7778 with `test/fake-claude.sh`
-standing in for `claude` (set via `FOREMAN_CLAUDE_BIN`). It drives the happy,
-blocked/answer/resume, crash/retry, and cancel paths through real herdr tabs
-without calling a model.
+standing in for `claude` (set via `FOREMAN_CLAUDE_BIN`). `test/fake-gh.sh` stands in for `gh`. It drives the happy,
+blocked/answer/resume, crash/retry, cancel, taskd-outage, and both implement
+pipelines (with a QA failure cycle, PR, and merge into a local bare remote)
+through real herdr tabs without calling a model.
