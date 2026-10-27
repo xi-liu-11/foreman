@@ -1,0 +1,15 @@
+$ task log T0001 research --attempt 1 --json --tail 2 | jq -c .type
+"user"
+"result"
+$ task log T9999
+error: no such task
+[exit 1]
+$ git diff --stat main...HEAD
+ README.md                                 |   1 +
+ specs/t0002-add-task-log-command/plan.md  | 103 ++++++++++++++++++++++++++++++
+ specs/t0002-add-task-log-command/spec.md  |  59 +++++++++++++++++
+ specs/t0002-add-task-log-command/tasks.md |  16 +++++
+ src/cli.ts                                |  36 ++++++++++-
+ src/pretty.ts                             |  30 +++++++++
+ src/runner.ts                             |  30 +--------
+ 7 files changed, 244 insertions(+), 31 deletions(-)

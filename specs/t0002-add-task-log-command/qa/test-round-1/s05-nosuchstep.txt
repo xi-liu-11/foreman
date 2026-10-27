@@ -1,0 +1,3 @@
+$ task log T0001 nosuchstep
+error: no step 'nosuchstep' on T0001
+[exit 1]

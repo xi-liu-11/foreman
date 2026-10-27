@@ -1,0 +1,6 @@
+$ task log T0098 build   (stub taskd, FOREMAN_HOME=tmp)
+not json at all
+hello
+{broken
+[1m[result] success turns=2 cost=$0.500[0m
+[exit 0]

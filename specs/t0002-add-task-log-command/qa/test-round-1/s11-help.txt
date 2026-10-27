@@ -1,0 +1,25 @@
+$ task help
+task — Foreman task CLI
+
+User commands
+  task create --project <name> --kind <kind> --title "<t>" [--brief "<text>" | --brief-file <path>] [--priority N] [--ticket <ref>]
+  task ls [--all] [--project <name>] [--status queued,running,...]
+  task show <id>
+  task log <id> [step] [--attempt N] [--tail N]
+                                  transcript of a step run (--json for raw events)
+  task inbox                      open questions and gates waiting on you
+  task answer <block-id> "<answer>"
+  task approve <id>               approve the gate the task is waiting at
+  task retry <id> [--fresh]       retry a failed task (fresh = new session)
+  task cancel <id>
+  task kinds                      list task kinds (pipelines)
+  task projects                   list registered projects
+
+Worker commands (task and step come from FOREMAN_TASK / FOREMAN_STEP)
+  task note "<text>"
+  task block "<question>"
+  task artifact add <path> [--kind <kind>] [--note "<text>"]
+  task show                       current task
+
+Add --json to any command for machine-readable output.
+[exit 0]

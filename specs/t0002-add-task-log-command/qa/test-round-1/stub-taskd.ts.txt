@@ -1,0 +1,9 @@
+const data: Record<string, any> = {
+  T0097: { task: { id: "T0097" }, steps: [] },
+  T0098: { task: { id: "T0098" }, steps: [{ name: "build", attempt: 1 }, { name: "missing", attempt: 1 }] },
+};
+const s = Bun.serve({ port: 0, fetch(req) {
+  const id = new URL(req.url).pathname.split("/")[2];
+  return data[id] ? Response.json(data[id]) : new Response("not found", { status: 404 });
+}});
+console.log(s.port);

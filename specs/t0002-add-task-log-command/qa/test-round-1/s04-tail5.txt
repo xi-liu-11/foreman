@@ -1,0 +1,7 @@
+$ task log T0001 research --attempt 1 --tail 5
+[36m▶ Bash[0m git add specs/research/crash-recovery-risks-in-taskd.md && git commit -q -m "Trim crash recovery report under 150 lines
+
+Co-Authored-By: Cla…
+[36m▶ StructuredOutput[0m 
+[1m[result] success turns=16 cost=$0.924[0m
+[exit 0]

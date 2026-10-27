@@ -1,10 +1,12 @@
 #!/usr/bin/env bun
 // Entry point for both `foreman` (daemon, runner, setup) and `task` (user and
 // worker commands). bin/foreman and bin/task are shims that call this file.
-import { basename } from "node:path";
+import { basename, join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
 import { TaskdClient } from "./client";
-import { CONFIG_PATH, ensureHome, loadConfig } from "./config";
+import { CONFIG_PATH, RUNS_DIR, ensureHome, loadConfig } from "./config";
 import { PIPELINES } from "./pipelines";
+import { prettyEvent } from "./pretty";
 
 const argv = process.argv.slice(2);
 const invokedAs = process.env.FOREMAN_CLI_NAME ?? basename(process.argv[1] ?? "task");
@@ -40,6 +42,8 @@ User commands
   task create --project <name> --kind <kind> --title "<t>" [--brief "<text>" | --brief-file <path>] [--priority N] [--ticket <ref>]
   task ls [--all] [--project <name>] [--status queued,running,...]
   task show <id>
+  task log <id> [step] [--attempt N] [--tail N]
+                                  transcript of a step run (--json for raw events)
   task inbox                      open questions and gates waiting on you
   task answer <block-id> "<answer>"
   task approve <id>               approve the gate the task is waiting at
@@ -123,6 +127,34 @@ async function taskMain(): Promise<void> {
         ];
         return lines.filter(l => l !== "").join("\n");
       });
+      return;
+    }
+    case "log": {
+      const id = rest[0] ?? die("task id required");
+      const posInt = (name: string) => {
+        const v = opt(name); if (v === undefined) return undefined;
+        return /^[1-9]\d*$/.test(v) ? Number(v) : die(`--${name} must be a positive integer`);
+      };
+      const tail = posInt("tail");
+      const d = await client.get(`/tasks/${id}`);
+      const taskId: string = d.task.id;
+      const steps: any[] = d.steps;
+      if (!steps.length) die(`${taskId} has no steps yet`);
+      const name = rest[1] ?? steps[steps.length - 1].name;
+      const named = steps.filter(s => s.name === name);
+      if (!named.length) die(`no step '${name}' on ${taskId}`);
+      const attempt = posInt("attempt") ?? Math.max(...named.map(s => s.attempt));
+      if (!named.some(s => s.attempt === attempt)) die(`no attempt ${attempt} of step '${name}' on ${taskId}`);
+      const path = join(RUNS_DIR, taskId, `${name}-${attempt}`, "transcript.jsonl");
+      if (!existsSync(path)) die(`no transcript at ${path}`);
+      const raw = readFileSync(path, "utf8").split("\n").filter(l => l.trim());
+      const lines = jsonOut ? raw : raw.flatMap(l => {
+        let ev: any; try { ev = JSON.parse(l); } catch { return [l]; }
+        const p = prettyEvent(ev);
+        return p ? p.split("\n") : [];
+      });
+      const shown = tail ? lines.slice(-tail) : lines;
+      if (shown.length) console.log(shown.join("\n"));
       return;
     }
     case "inbox": {

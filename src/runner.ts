@@ -6,6 +6,7 @@ import { mkdirSync, writeFileSync, readFileSync, appendFileSync, existsSync } fr
 import { TaskdClient } from "./client";
 import { REPO_ROOT, RUNS_DIR } from "./config";
 import { WORKER_RESULT_SCHEMA } from "./schema";
+import { prettyEvent } from "./pretty";
 
 interface StepContext {
   step: any; task: any; project: any; defaults: any; deny: string[];
@@ -14,35 +15,6 @@ interface StepContext {
 
 function fill(template: string, vars: Record<string, string>): string {
   return template.replace(/\{\{(\w+)\}\}/g, (_, k) => vars[k] ?? "");
-}
-
-function short(s: unknown, n = 160): string {
-  const t = typeof s === "string" ? s : JSON.stringify(s) ?? "";
-  return t.length > n ? t.slice(0, n) + "…" : t;
-}
-
-function prettyEvent(ev: any): string | null {
-  if (ev.type === "system" && ev.subtype === "init") return `\x1b[2m[init] model=${ev.model} session=${ev.session_id}\x1b[0m`;
-  if (ev.type === "assistant") {
-    const out: string[] = [];
-    for (const block of ev.message?.content ?? []) {
-      if (block.type === "text" && block.text?.trim()) out.push(block.text.trim());
-      if (block.type === "tool_use") {
-        const inp = block.input ?? {};
-        const hint = inp.command ?? inp.file_path ?? inp.pattern ?? inp.description ?? inp.prompt ?? "";
-        out.push(`\x1b[36m▶ ${block.name}\x1b[0m ${short(hint, 140)}`);
-      }
-    }
-    return out.length ? out.join("\n") : null;
-  }
-  if (ev.type === "user") {
-    for (const block of ev.message?.content ?? []) {
-      if (block.type === "tool_result" && block.is_error) return `\x1b[31m✗ tool error:\x1b[0m ${short(block.content, 200)}`;
-    }
-    return null;
-  }
-  if (ev.type === "result") return `\x1b[1m[result] ${ev.subtype} turns=${ev.num_turns} cost=$${(ev.total_cost_usd ?? 0).toFixed(3)}\x1b[0m`;
-  return null;
 }
 
 export async function runStep(stepId: number): Promise<void> {

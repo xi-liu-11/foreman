@@ -1,0 +1,6 @@
+$ task log T0098 build --json   (stub taskd, FOREMAN_HOME=tmp)
+not json at all
+{"type":"assistant","message":{"content":[{"type":"text","text":"hello"}]}}
+{broken
+{"type":"result","subtype":"success","num_turns":2,"total_cost_usd":0.5}
+[exit 0]

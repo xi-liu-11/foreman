@@ -1,0 +1,4 @@
+$ task log T0098 build --tail 2   (stub taskd, FOREMAN_HOME=tmp)
+{broken
+[1m[result] success turns=2 cost=$0.500[0m
+[exit 0]

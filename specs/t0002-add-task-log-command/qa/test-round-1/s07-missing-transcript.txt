@@ -1,0 +1,3 @@
+$ task log T0098 missing   (stub taskd, FOREMAN_HOME=tmp)
+error: no transcript at /var/folders/7w/1mrvd9812138hkj9ndncqcvh0000gn/T/tmp.UiadVCwlvp/runs/T0098/missing-1/transcript.jsonl
+[exit 1]
