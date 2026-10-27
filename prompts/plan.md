@@ -1,0 +1,1 @@
+Run `/speckit.plan` for `specs/{{FEATURE}}/spec.md`, then `/speckit.tasks`, then `/speckit.checklist`. Ensure plan.md, research.md, data-model.md (if relevant), contracts (if relevant), quickstart.md, tasks.md, and checklists exist. Mark independent, file-disjoint tasks with [P]. Commit everything.

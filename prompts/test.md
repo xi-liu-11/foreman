@@ -1,0 +1,1 @@
+Verify the implementation on this branch against the acceptance scenarios in `specs/{{FEATURE}}/spec.md`, using the project's verification mode ({{VERIFY}}). Record evidence under `specs/{{FEATURE}}/qa/test-round-{{QA_CYCLE}}/`. Write `specs/{{FEATURE}}/qa/test-round-{{QA_CYCLE}}.md`. Set `verdict` to "pass" or "fail".

@@ -1,0 +1,1 @@
+Review the diff between this branch and `{{BASE_BRANCH}}` against `specs/{{FEATURE}}/spec.md`, plan.md, and the constitution. Write `specs/{{FEATURE}}/qa/review-round-{{QA_CYCLE}}.md`. Set `verdict` to "pass" or "fail".

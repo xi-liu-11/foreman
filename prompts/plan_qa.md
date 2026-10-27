@@ -1,0 +1,1 @@
+Run `/speckit.analyze` on `specs/{{FEATURE}}/` and review the plan against the constitution. Complete the checklists honestly. Write `specs/{{FEATURE}}/qa/plan-review.md` with findings. Set `verdict` to "pass" only if the spec, plan, and tasks are consistent and complete enough to implement without guessing; otherwise "fail" with the specific gaps.

@@ -1,0 +1,1 @@
+Prepare the pull request body for this feature: summary, what changed, how it was verified (link the qa reports), merge risk (low/medium/high with reasoning), and follow-ups. Write it to `specs/{{FEATURE}}/pr.md` and commit. Do not push; the scheduler opens the PR.

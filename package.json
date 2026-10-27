@@ -1,0 +1,15 @@
+{
+  "name": "foreman",
+  "version": "0.1.0",
+  "description": "Task scheduling and agent coordination for Claude Code + herdr",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "taskd": "bun src/taskd.ts",
+    "typecheck": "bunx tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "typescript": "^5.6.0"
+  }
+}

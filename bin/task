@@ -1,0 +1,5 @@
+#!/bin/sh
+# Shim: runs the Foreman task CLI with bun. Install by symlinking into ~/.local/bin.
+SELF="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+BUN="${BUN:-$HOME/.bun/bin/bun}"; [ -x "$BUN" ] || BUN=bun
+FOREMAN_CLI_NAME=task exec "$BUN" "$SELF/../src/cli.ts" "$@"
