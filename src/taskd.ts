@@ -461,6 +461,12 @@ async function route(req: Request): Promise<Response> {
       if (task.status !== "failed") return bad(`task is ${task.status}, not failed`);
       const steps = pipelineSteps(task);
       const cur = task.current_step ?? steps[0]?.name ?? null;
+      // A failed system step (open_pr, merge) is simply re-run by the scheduler once the task is active again.
+      if (steps.some(s => s.type === "system" && s.name === cur)) {
+        tx(() => { store.updateTask(task.id, { status: "running", result: null }); store.event("task.retried", { steps: [cur], system: true }, task.id); });
+        setTimeout(tick, 50);
+        return json({ ok: true, step: cur });
+      }
       const group = steps.find(s => s.type === "parallel" && s.name === task.current_step) as any;
       // R9: retrying at a parallel group re-queues the children whose latest row failed.
       const targets = group ? group.children.filter((c: any) => store.latestStep(task.id, c.name)?.status === "failed") : agentDefs(steps).filter(d => d.name === cur);
