@@ -473,7 +473,7 @@ async function route(req: Request): Promise<Response> {
     return json(tasks.map(t => ({ ...t, open_blocks: store.openBlocks(t.id).length, cost_usd: store.stepsForTask(t.id).reduce((a, s) => a + s.cost_usd, 0) })));
   }
   if (p === "/tasks" && req.method === "POST") {
-    const { project: projName, kind, priority, ticket } = body;
+    const { project: projName, kind, priority, ticket, branch: existingBranch, start_at } = body;
     let { title, brief } = body;
     if (!cfg.projects[projName]) return bad(`unknown project '${projName}'. Known: ${Object.keys(cfg.projects).join(", ") || "(none; add one to config.toml)"}`);
     const proj = cfg.projects[projName];
@@ -487,18 +487,21 @@ async function route(req: Request): Promise<Response> {
     }
     if (!title || !brief) return bad("title and brief are required");
     let pipeline; try { pipeline = pipelineFor(kind, proj.speckit, { merge: proj.merge, merge_gate: proj.merge_gate, tickets: Boolean(proj.tickets) }); } catch (e: any) { return bad(e.message); }
+    // --start-at skips earlier steps (for example a feature already specified and planned by hand).
+    if (start_at && !pipeline.steps.some(s => s.name === start_at)) return bad(`no step '${start_at}' in the ${pipeline.kind} pipeline (${pipeline.steps.map(s => s.name).join(", ")})`);
+    if (existingBranch && !pipeline.needs_worktree) return bad(`--branch only applies to pipelines that use a worktree`);
     const id = store.nextTaskId();
     let wt: git.WorktreeInfo | null = null;
     if (pipeline.needs_worktree) {
       try {
-        const featureNumber = proj.speckit ? store.nextFeatureNumber(projName, await git.highestFeatureNumber(proj.path)) : null;
-        wt = await git.setupWorktree(cfg, proj, id, title, featureNumber);
+        const featureNumber = proj.speckit && !existingBranch ? store.nextFeatureNumber(projName, await git.highestFeatureNumber(proj.path)) : null;
+        wt = await git.setupWorktree(cfg, proj, id, title, featureNumber, existingBranch ?? null);
         git.linkClaudeMemory(proj.path, wt.worktree);
       } catch (e: any) { return bad(`could not prepare worktree: ${e.message}`); }
     }
     const task = tx(() => {
-      const t = store.insertTask({ id, project: projName, kind: pipeline.kind, title, brief, status: "queued", pipeline: JSON.stringify(pipeline.steps), current_step: null, priority: Number(priority ?? 5), branch: wt?.branch ?? null, worktree: wt?.worktree ?? null, feature_dir: wt?.feature_dir ?? null, ticket: ticket ?? null, pr_url: null, qa_cycles: 0, result: null });
-      store.event("task.created", { kind: pipeline.kind, title, branch: wt?.branch ?? null, worktree: wt?.worktree ?? null }, t.id);
+      const t = store.insertTask({ id, project: projName, kind: pipeline.kind, title, brief, status: "queued", pipeline: JSON.stringify(pipeline.steps), current_step: start_at ?? null, priority: Number(priority ?? 5), branch: wt?.branch ?? null, worktree: wt?.worktree ?? null, feature_dir: wt?.feature_dir ?? null, ticket: ticket ?? null, pr_url: null, qa_cycles: 0, result: null });
+      store.event("task.created", { kind: pipeline.kind, title, branch: wt?.branch ?? null, worktree: wt?.worktree ?? null, start_at: start_at ?? null, existing_branch: Boolean(existingBranch) }, t.id);
       return t;
     });
     log(`created ${task.id} [${kind}] ${title}`);

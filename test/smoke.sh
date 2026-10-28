@@ -111,5 +111,12 @@ wait_for T0009 gate; "$ROOT/bin/task" approve T0009 >/dev/null; wait_for T0009 g
 git -C "$T/repos/gated" fetch -q origin
 [ "$(git -C "$T/repos/gated" rev-list --merges --count origin/main)" = 1 ] && echo "  one merge commit on main (no-ff)" || { echo "  expected a merge commit"; exit 1; }
 git -C "$T/repos/gated" log -1 --format=%B origin/main | grep -q "The widget now exists" && echo "  merge message from handoff.md" || { echo "  merge message wrong"; exit 1; }
+echo "implement on an existing branch, starting at implement"
+git -C "$T/repos/lite" fetch -q origin && git -C "$T/repos/lite" branch -q fm/manual origin/main
+"$ROOT/bin/task" create --project lite --kind implement --title "Manual feature" --brief x --branch fm/manual --start-at implement 2>&1 | grep -q created || { echo "  create failed"; exit 1; }
+[ "$(field T0010 branch)" = "fm/manual" ] && echo "  attached to fm/manual" || { echo "  wrong branch $(field T0010 branch)"; exit 1; }
+wait_for T0010 gate; "$ROOT/bin/task" approve T0010 >/dev/null; wait_for T0010 done
+"$ROOT/bin/task" show T0010 --json | python3 -c 'import json,sys; names=[s["name"] for s in json.load(sys.stdin)["steps"]]; sys.exit(0 if "plan" not in names and names[0]=="implement" else 1)' && echo "  plan step skipped" || { echo "  plan not skipped"; exit 1; }
+"$ROOT/bin/task" create --project lite --kind implement --title "Busy branch" --brief x --branch main 2>&1 | grep -q "checked out" && echo "  refuses a branch that is checked out" || { echo "  did not refuse checked-out branch"; exit 1; }
 "$ROOT/bin/task" ls --all
 echo "smoke test passed"

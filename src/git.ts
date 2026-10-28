@@ -43,9 +43,10 @@ export interface WorktreeInfo { branch: string; worktree: string; feature_dir: s
 // Create the branch and worktree for a task. For Spec Kit projects also create
 // specs/<NNN-name>/spec.md from the template so the specify worker can skip the
 // script (which would try `git checkout -b` in the main checkout).
-export async function setupWorktree(cfg: ForemanConfig, proj: ProjectConfig, task_id: string, title: string, featureNumber: number | null): Promise<WorktreeInfo> {
+export async function setupWorktree(cfg: ForemanConfig, proj: ProjectConfig, task_id: string, title: string, featureNumber: number | null, existingBranch: string | null = null): Promise<WorktreeInfo> {
   const repo = proj.path;
   await must([gitBin(), "rev-parse", "--git-dir"], repo, `${proj.name} is not a git repository`);
+  if (existingBranch) return attachWorktree(cfg, proj, task_id, title, existingBranch);
   const base = proj.base_branch;
   const baseOk = await exec([gitBin(), "rev-parse", "--verify", "--quiet", base], repo);
   if (baseOk.code !== 0) throw new Error(`base branch '${base}' does not exist in ${repo}`);
@@ -71,6 +72,25 @@ export async function setupWorktree(cfg: ForemanConfig, proj: ProjectConfig, tas
   const spec = join(dir, "spec.md");
   if (featureNumber !== null && existsSync(template)) copyFileSync(template, spec);
   else if (!existsSync(spec)) writeFileSync(spec, `# ${title}\n\n_Created by Foreman ${task_id}._\n`);
+  return { branch, worktree, feature_dir };
+}
+
+// Attach a task to a branch that already exists (for example a feature whose
+// spec and plan were written by hand). The branch must not be checked out anywhere.
+async function attachWorktree(cfg: ForemanConfig, proj: ProjectConfig, task_id: string, title: string, branch: string): Promise<WorktreeInfo> {
+  const repo = proj.path;
+  const ok = await exec([gitBin(), "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`], repo);
+  if (ok.code !== 0) throw new Error(`branch '${branch}' does not exist in ${repo}`);
+  const list = (await must([gitBin(), "worktree", "list", "--porcelain"], repo, "git worktree list")).split("\n\n");
+  const holder = list.find(block => block.includes(`branch refs/heads/${branch}\n`) || block.endsWith(`branch refs/heads/${branch}`));
+  if (holder) throw new Error(`branch '${branch}' is checked out at ${holder.split("\n")[0].replace(/^worktree /, "")}; switch that checkout to another branch first`);
+  const root = join(expandHome(cfg.defaults.worktrees), proj.name);
+  mkdirSync(root, { recursive: true });
+  const worktree = join(root, branch.replace("/", "-"));
+  if (existsSync(worktree)) throw new Error(`worktree path already exists: ${worktree}`);
+  await must([gitBin(), "worktree", "add", worktree, branch], repo, "git worktree add");
+  const feature_dir = existsSync(join(worktree, "specs", branch)) ? `specs/${branch}` : `specs/${task_id.toLowerCase()}-${shortName(title)}`;
+  mkdirSync(join(worktree, feature_dir), { recursive: true });
   return { branch, worktree, feature_dir };
 }
 

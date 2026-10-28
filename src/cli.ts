@@ -41,6 +41,8 @@ const TASK_HELP = `task — Foreman task CLI
 User commands
   task create --project <name> --kind <kind> --title "<t>" [--brief "<text>" | --brief-file <path>] [--priority N] [--ticket <ref>]
                                   with --ticket, title and brief default to the ticket's
+              [--branch <existing>] [--start-at <step>]
+                                  attach to an existing branch (not checked out anywhere) and/or skip earlier pipeline steps
   task ls [--all] [--project <name>] [--status queued,running,...]
   task show <id>
   task log <id> [step] [--attempt N] [--tail N]
@@ -94,7 +96,7 @@ async function taskMain(): Promise<void> {
       const briefFile = opt("brief-file");
       const brief = briefFile ? await Bun.file(briefFile).text() : opt("brief") ?? rest.join(" ") ?? "";
       if (!brief.trim() && !ticket) die("--brief or --brief-file required (or --ticket)");
-      const t = await client.post("/tasks", { project, kind, title, brief: brief.trim() || undefined, priority: opt("priority"), ticket });
+      const t = await client.post("/tasks", { project, kind, title, brief: brief.trim() || undefined, priority: opt("priority"), ticket, branch: opt("branch"), start_at: opt("start-at") });
       out(t, () => `created ${t.id} [${t.kind}] ${t.title}`);
       return;
     }
