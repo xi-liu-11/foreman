@@ -54,6 +54,7 @@ User commands
   task cancel <id>
   task kinds                      list task kinds (pipelines)
   task projects                   list registered projects
+  task ticket ls --project <name> [--states "Todo,In Progress"]
   task ticket show <ref> --project <name>
   task ticket comment <ref> "<body>" --project <name>
   task ticket transition <ref> "<state>" --project <name>
@@ -222,6 +223,12 @@ async function taskMain(): Promise<void> {
         if (a.length >= 2 || (a.length === 1 && !needText)) return [a[0], a.slice(1).join(" ")];
         return [await defaultRef(), a.join(" ")];
       };
+      if (sub === "ls") {
+        const q2 = new URLSearchParams(scope as Record<string, string>); if (opt("states")) q2.set("states", opt("states")!);
+        const ts: any[] = await client.get(`/tickets?${q2}`);
+        out(ts, () => ts.length ? ts.map(t => `${pad(t.ref, 8)} ${pad(t.state, 12)} P${t.priority} ${pad(t.project, 32)} ${t.title}${t.labels.length ? "  [" + t.labels.join(", ") + "]" : ""}`).join("\n") : "no tickets");
+        return;
+      }
       if (sub === "show") {
         const [ref] = await refAndText(false);
         const t = await client.get(`/tickets/${encodeURIComponent(ref)}${q}`);

@@ -19,7 +19,9 @@ export interface TicketProvider {
   comment(ref: string, body: string): Promise<void>;
   transition(ref: string, state: string): Promise<string>;
   create(opts: { title: string; description?: string; parent?: string; team?: string }): Promise<Ticket>;
+  list(opts: { team?: string; states?: string[] }): Promise<TicketSummary[]>;
 }
+export interface TicketSummary { ref: string; title: string; state: string; priority: number; project: string; url: string; updated_at: string; labels: string[] }
 
 const LINEAR_URL = process.env.FOREMAN_LINEAR_URL ?? "https://api.linear.app/graphql";
 
@@ -64,6 +66,14 @@ export class LinearProvider implements TicketProvider {
     if (!target) throw new Error(`linear: team has no state '${state}' (known: ${states.map(s => s.name).join(", ")})`);
     await this.gql(`mutation($id: String!, $stateId: String!) { issueUpdate(id: $id, input: { stateId: $stateId }) { success } }`, { id: t.id, stateId: target.id });
     return target.name;
+  }
+
+  async list(opts: { team?: string; states?: string[] }): Promise<TicketSummary[]> {
+    const filter: any = {};
+    if (opts.team) filter.team = { key: { eq: opts.team } };
+    if (opts.states?.length) filter.state = { name: { in: opts.states } };
+    const d = await this.gql(`query($filter: IssueFilter) { issues(filter: $filter, first: 100, orderBy: updatedAt) { nodes { identifier title priority url updatedAt state { name } project { name } labels { nodes { name } } } } }`, { filter });
+    return (d.issues?.nodes ?? []).map((i: any) => ({ ref: i.identifier, title: i.title, state: i.state?.name ?? "", priority: i.priority ?? 0, project: i.project?.name ?? "", url: i.url, updated_at: i.updatedAt, labels: (i.labels?.nodes ?? []).map((l: any) => l.name) }));
   }
 
   async create(opts: { title: string; description?: string; parent?: string; team?: string }): Promise<Ticket> {

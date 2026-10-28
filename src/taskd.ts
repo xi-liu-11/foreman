@@ -523,6 +523,7 @@ async function route(req: Request): Promise<Response> {
     if (!provider) return bad(`project '${proj.name}' has no ticket provider configured`);
     try {
       if (req.method === "GET" && ref) return json(await provider.get(ref));
+      if (req.method === "GET") return json(await provider.list({ team: proj.ticket_team, states: url.searchParams.get("states")?.split(",").map(s => s.trim()).filter(Boolean) }));
       if (req.method === "POST" && !ref) {
         if (!body.title) return bad("title required");
         const t = await provider.create({ title: String(body.title), description: body.description ? String(body.description) : undefined, parent: body.parent ? String(body.parent) : undefined, team: proj.ticket_team });
