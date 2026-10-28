@@ -83,12 +83,18 @@ async function attachWorktree(cfg: ForemanConfig, proj: ProjectConfig, task_id: 
   if (ok.code !== 0) throw new Error(`branch '${branch}' does not exist in ${repo}`);
   const list = (await must([gitBin(), "worktree", "list", "--porcelain"], repo, "git worktree list")).split("\n\n");
   const holder = list.find(block => block.includes(`branch refs/heads/${branch}\n`) || block.endsWith(`branch refs/heads/${branch}`));
-  if (holder) throw new Error(`branch '${branch}' is checked out at ${holder.split("\n")[0].replace(/^worktree /, "")}; switch that checkout to another branch first`);
+  const holderPath = holder?.split("\n")[0].replace(/^worktree /, "") ?? null;
   const root = join(expandHome(cfg.defaults.worktrees), proj.name);
   mkdirSync(root, { recursive: true });
   const worktree = join(root, branch.replace("/", "-"));
-  if (existsSync(worktree)) throw new Error(`worktree path already exists: ${worktree}`);
-  await must([gitBin(), "worktree", "add", worktree, branch], repo, "git worktree add");
+  if (holderPath && holderPath === worktree) {
+    // The user already made the worktree where Foreman would put it: adopt it as long as it is clean.
+    if (!(await isClean(worktree))) throw new Error(`worktree ${worktree} has uncommitted changes; commit or stash them first`);
+  } else {
+    if (holderPath) throw new Error(`branch '${branch}' is checked out at ${holderPath}; switch that checkout to another branch first`);
+    if (existsSync(worktree)) throw new Error(`worktree path already exists: ${worktree}`);
+    await must([gitBin(), "worktree", "add", worktree, branch], repo, "git worktree add");
+  }
   const feature_dir = existsSync(join(worktree, "specs", branch)) ? `specs/${branch}` : `specs/${task_id.toLowerCase()}-${shortName(title)}`;
   mkdirSync(join(worktree, feature_dir), { recursive: true });
   return { branch, worktree, feature_dir };
