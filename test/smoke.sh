@@ -26,6 +26,16 @@ speckit = true
 path = "$ROOT"
 verify = "inspect"
 concurrency = 1
+[tickets.linear]
+api_key = "lin_api_test"
+[projects.direct]
+path = "$T/repos/direct"
+verify = "inspect"
+speckit = false
+merge = "direct"
+tickets = "linear"
+ticket_team = "TST"
+ticket_states = { start = "In Progress", done = "Done" }
 CFG
 echo done > "$T/mode"
 mk_repo() { # name speckit
@@ -34,11 +44,12 @@ mk_repo() { # name speckit
   git -C "$r" add -A; git -C "$r" -c user.email=f@x -c user.name=f commit -qm init
   git init -q --bare "$T/repos/$1.git"; git -C "$r" remote add origin "$T/repos/$1.git"; git -C "$r" push -q -u origin main 2>/dev/null
 }
-mk_repo lite 0; mk_repo kit 1
-start_taskd() { FOREMAN_HOME="$T" FOREMAN_CLAUDE_BIN="$ROOT/test/fake-claude.sh" FOREMAN_GH_BIN="$ROOT/test/fake-gh.sh" "$ROOT/bin/foreman" taskd >> "$T/taskd.log" 2>&1 & PID=$!; }
+mk_repo lite 0; mk_repo kit 1; mk_repo direct 0
+FAKE_LINEAR_PORT=7779 FAKE_LINEAR_LOG="$T/linear.log" bun "$ROOT/test/fake-linear.ts" >> "$T/linear-server.log" 2>&1 & LPID=$!
+start_taskd() { FOREMAN_HOME="$T" FOREMAN_CLAUDE_BIN="$ROOT/test/fake-claude.sh" FOREMAN_GH_BIN="$ROOT/test/fake-gh.sh" FOREMAN_LINEAR_URL=http://127.0.0.1:7779 "$ROOT/bin/foreman" taskd >> "$T/taskd.log" 2>&1 & PID=$!; }
 start_taskd
 cleanup() {
-  kill $PID 2>/dev/null
+  kill $PID $LPID 2>/dev/null
   ws=$(herdr workspace list 2>/dev/null | python3 -c 'import json,sys; print(next((w["workspace_id"] for w in json.load(sys.stdin)["result"]["workspaces"] if w["label"]=="fm:smoke"),""))' 2>/dev/null)
   [ -n "$ws" ] && herdr workspace close "$ws" >/dev/null 2>&1
   echo "logs: $T"
@@ -70,5 +81,20 @@ echo "implement (speckit): numbered branch and feature dir from template"
 [ "$(field T0007 branch)" = "001-add-gadget" ] && echo "  branch 001-add-gadget" || { echo "  unexpected branch $(field T0007 branch)"; exit 1; }
 grep -q "Spec template" "$(field T0007 worktree)/specs/001-add-gadget/spec.md" && echo "  spec.md seeded from template" || { echo "  spec.md not from template"; exit 1; }
 wait_for T0007 gate; "$ROOT/bin/task" approve T0007 >/dev/null; wait_for T0007 gate; "$ROOT/bin/task" approve T0007 >/dev/null; wait_for T0007 done
+echo "implement (direct merge) from a Linear ticket: title/brief from ticket, worker ticket commands, squash onto main and push, ticket transitions"
+"$ROOT/bin/task" create --project direct --kind implement --ticket TST-1 >/dev/null
+[ "$(field T0008 title)" = "Ticketed widget" ] && echo "  title taken from ticket" || { echo "  title not from ticket: $(field T0008 title)"; exit 1; }
+"$ROOT/bin/task" show T0008 | grep -q "Build the widget" && echo "  brief taken from ticket" || { echo "  brief not from ticket"; exit 1; }
+FOREMAN_TASK=T0008 FOREMAN_STEP=1 "$ROOT/bin/task" ticket comment "Found a thing" >/dev/null
+FOREMAN_TASK=T0008 FOREMAN_STEP=1 "$ROOT/bin/task" ticket create --title "Follow-up bug" --parent TST-1 | grep -q "created TST-2" && echo "  worker created a child ticket" || { echo "  ticket create failed"; exit 1; }
+"$ROOT/bin/task" ticket show TST-1 --project direct | grep -q "In Progress" && echo "  ticket moved to In Progress on start" || { echo "  no start transition"; exit 1; }
+wait_for T0008 gate; "$ROOT/bin/task" approve T0008 >/dev/null; wait_for T0008 done
+git -C "$T/repos/direct" fetch -q origin && git -C "$T/repos/direct" show origin/main:work.log | grep -q "step implement ran" && echo "  squashed work reached origin/main" || { echo "  direct merge missing on origin"; exit 1; }
+[ "$(git -C "$T/repos/direct" rev-list --count origin/main)" = 2 ] && echo "  exactly one squash commit on main" || { echo "  unexpected commit count $(git -C "$T/repos/direct" rev-list --count origin/main)"; exit 1; }
+git -C "$T/repos/direct" log -1 --format=%B origin/main | grep -q "Foreman T0008 (TST-1)" && echo "  commit message cites task and ticket" || { echo "  commit message wrong"; exit 1; }
+[ "$(git -C "$T/repos/direct" rev-parse main)" = "$(git -C "$T/repos/direct" rev-parse origin/main)" ] && echo "  main checkout fast-forwarded" || { echo "  main checkout not updated"; exit 1; }
+[ ! -d "$(field T0008 worktree)" ] && echo "  worktree removed" || { echo "  worktree still present"; exit 1; }
+git -C "$T/repos/direct" branch --list "fm/*" | grep -q . && { echo "  feature branch not deleted"; exit 1; } || echo "  feature branch deleted"
+grep -q "transition TST-1: Done" "$T/linear.log" && grep -q "comment TST-1: Found a thing" "$T/linear.log" && grep -q "create TST-2: Follow-up bug (parent TST-1)" "$T/linear.log" && echo "  linear log: start, comment, create, done" || { echo "  linear log incomplete:"; cat "$T/linear.log"; exit 1; }
 "$ROOT/bin/task" ls --all
 echo "smoke test passed"

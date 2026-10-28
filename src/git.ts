@@ -96,6 +96,42 @@ export async function pushAndOpenPr(proj: ProjectConfig, worktree: string, branc
   return url;
 }
 
+// Direct mode: rebase the branch on the base, squash it into one commit, push
+// it to the base branch, fast-forward the main checkout if it is on the base.
+// Everything happens in the worktree, so the user's main checkout is never
+// left mid-merge.
+export async function squashMergeDirect(proj: ProjectConfig, worktree: string, branch: string, message: string): Promise<string> {
+  if (!(await isClean(worktree))) throw new Error("worktree has uncommitted changes; the last step must commit everything");
+  const hasOrigin = (await exec([gitBin(), "remote", "get-url", "origin"], worktree)).code === 0;
+  const baseRef = hasOrigin ? `origin/${proj.base_branch}` : proj.base_branch;
+  if (hasOrigin) await must([gitBin(), "fetch", "--quiet", "origin", proj.base_branch], worktree, "git fetch");
+  const rebase = await exec([gitBin(), "rebase", baseRef], worktree);
+  if (rebase.code !== 0) { await exec([gitBin(), "rebase", "--abort"], worktree); throw new Error(`rebase onto ${baseRef} has conflicts; resolve in ${worktree} and run task retry`); }
+  const changed = (await must([gitBin(), "rev-list", "--count", `${baseRef}..HEAD`], worktree, "git rev-list")).trim();
+  if (changed === "0") throw new Error(`branch ${branch} has no commits beyond ${baseRef}`);
+  await must([gitBin(), "reset", "--quiet", "--soft", baseRef], worktree, "git reset --soft");
+  await must([gitBin(), "-c", "user.useConfigOnly=false", "commit", "--quiet", "-m", message], worktree, "git commit");
+  const sha = (await must([gitBin(), "rev-parse", "HEAD"], worktree, "git rev-parse")).trim();
+  if (hasOrigin) {
+    await must([gitBin(), "push", "--quiet", "origin", `HEAD:refs/heads/${proj.base_branch}`], worktree, "git push");
+    await exec([gitBin(), "fetch", "--quiet", "origin"], proj.path);
+  }
+  // Keep the main checkout current when it is sitting on the base branch.
+  const current = (await exec([gitBin(), "rev-parse", "--abbrev-ref", "HEAD"], proj.path)).out.trim();
+  let note = "";
+  if (current === proj.base_branch) {
+    const ff = await exec([gitBin(), "merge", "--ff-only", "--quiet", sha], proj.path);
+    note = ff.code === 0 ? "; main checkout fast-forwarded" : `; main checkout not updated (${ff.err.trim().split("\n").pop()})`;
+  } else if (!hasOrigin) {
+    await must([gitBin(), "update-ref", `refs/heads/${proj.base_branch}`, sha], proj.path, "git update-ref");
+  }
+  return `${sha.slice(0, 7)} squashed onto ${proj.base_branch}${hasOrigin ? " and pushed" : ""}${note}`;
+}
+
+export async function deleteBranch(proj: ProjectConfig, branch: string): Promise<void> {
+  await exec([gitBin(), "branch", "-D", branch], proj.path);
+}
+
 export async function mergePr(proj: ProjectConfig, worktree: string, prUrl: string): Promise<string> {
   const out = await must([ghBin(), "pr", "merge", prUrl, "--squash", "--delete-branch"], worktree, "gh pr merge");
   return out;

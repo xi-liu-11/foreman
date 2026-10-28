@@ -6,7 +6,7 @@ export type PipelineStep =
   | { type: "agent"; name: string; role: string; prompt: string }
   | { type: "gate"; name: string; label: string }
   | { type: "parallel"; name: string; children: { name: string; role: string; prompt: string }[]; on_fail: string; max_cycles_key: "max_qa_cycles" }
-  | { type: "system"; name: string; action: "open_pr" | "merge" };
+  | { type: "system"; name: string; action: "open_pr" | "merge" | "merge_direct" };
 
 export interface Pipeline {
   kind: string;
@@ -15,19 +15,23 @@ export interface Pipeline {
   steps: PipelineStep[];
 }
 
+const QA: PipelineStep = {
+  type: "parallel", name: "qa", on_fail: "implement", max_cycles_key: "max_qa_cycles",
+  children: [
+    { name: "review", role: "qa-reviewer", prompt: "review" },
+    { name: "test", role: "test-analyst", prompt: "test" },
+  ],
+};
 const QA_AND_PR: PipelineStep[] = [
-  {
-    type: "parallel", name: "qa", on_fail: "implement", max_cycles_key: "max_qa_cycles",
-    children: [
-      { name: "review", role: "qa-reviewer", prompt: "review" },
-      { name: "test", role: "test-analyst", prompt: "test" },
-    ],
-  },
+  QA,
   { type: "agent", name: "pr", role: "developer", prompt: "pr" },
   { type: "system", name: "open_pr", action: "open_pr" },
   { type: "gate", name: "merge_approved", label: "Approve merge" },
   { type: "system", name: "merge", action: "merge" },
 ];
+// Direct-merge projects: after QA the scheduler squashes the branch onto the
+// base branch and pushes. No PR body step, no merge gate.
+const QA_AND_MERGE: PipelineStep[] = [QA, { type: "system", name: "merge", action: "merge_direct" }];
 
 export const PIPELINES: Record<string, Pipeline> = {
   research: {
@@ -74,10 +78,13 @@ export const PIPELINES: Record<string, Pipeline> = {
   },
 };
 
-// `implement` resolves to the Spec Kit or lite variant depending on the project.
-export function pipelineFor(kind: string, speckit = true): Pipeline {
+// `implement` resolves to the Spec Kit or lite variant depending on the project,
+// and its tail to PR or direct merge depending on the project's merge mode.
+export function pipelineFor(kind: string, speckit = true, merge: "pr" | "direct" = "pr"): Pipeline {
   if (kind === "implement" && !speckit) kind = "implement_lite";
   const p = PIPELINES[kind];
   if (!p) throw new Error(`Unknown task kind '${kind}'. Known: ${Object.keys(PIPELINES).filter(k => k !== "implement_lite").join(", ")}`);
-  return p;
+  if (merge !== "direct" || !p.needs_worktree) return p;
+  const i = p.steps.indexOf(QA);
+  return { ...p, steps: [...p.steps.slice(0, i), ...QA_AND_MERGE] };
 }

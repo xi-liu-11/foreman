@@ -62,7 +62,34 @@ task cancel T0004
 ```
 
 Workers use the same CLI with `FOREMAN_TASK` and `FOREMAN_STEP` set:
-`task note`, `task block`, `task artifact add`, `task show`.
+`task note`, `task block`, `task artifact add`, `task show`, `task ticket ...`.
+
+### Tickets (Linear)
+
+Set `[tickets.linear] api_key` (or `LINEAR_API_KEY` for taskd) and, per project,
+`tickets = "linear"`, `ticket_team = "TAC"` and optionally
+`ticket_states = { start = "In Progress", review = "In Review", done = "Done" }`.
+Then `task create --project tackle-tally --kind implement --ticket TAC-130` takes
+the title and brief from the ticket, and the scheduler comments on it when the
+task starts, opens a PR, merges, or fails (transitioning to the configured
+states). Workers see the ticket in their prompt and can
+`task ticket show|comment|transition|create`; `task ticket ... --project <p>`
+does the same from your shell. Only taskd holds the API key.
+
+### Merge modes
+
+`merge = "pr"` (default): the pipeline pushes the branch, opens a PR, waits for
+`task approve`, then squash-merges. `merge = "direct"`: after QA passes the
+scheduler rebases, squashes into one commit citing the task and ticket, pushes
+to the base branch, fast-forwards your main checkout, and removes the worktree
+and branch. No PR body step and no merge gate.
+
+### Running taskd as a service
+
+`foreman service install` writes a launchd agent (`com.foreman.taskd`) that
+starts taskd at login, restarts it if it dies, and logs to `~/.foreman/taskd.log`.
+`foreman service status|restart|stop|uninstall` manage it. Workers still run in
+herdr tabs; taskd only needs the herdr socket, git, gh, and bun.
 
 Run artifacts live under `~/.foreman/runs/<task>/<step>-<attempt>/`:
 `system.md`, `prompt.md`, `agents.json`, `command.txt`, `transcript.jsonl`,
@@ -108,8 +135,8 @@ then fails the task and notifies you. Every transition is an event row.
 
 1. ~~DB, CLI, taskd, one research task in a herdr tab~~
 2. ~~Block and answer flow end to end~~ and ~~crash-recovery hardening (fencing, cancel on stale heartbeat, startup grace, result retry, transactions, resume in scheduler)~~
-3. ~~Worktrees and the Spec Kit implement pipeline with the QA loop, `open_pr` and `merge` system steps~~ (stub-verified; needs one real run)
-4. Human gates polish, assistant `pa` skill, ticket provider adapters (`task ticket ...`)
+3. ~~Worktrees and the Spec Kit implement pipeline with the QA loop, `open_pr` and `merge` system steps~~ (real run T0002 verified 2026-10-28)
+4. ~~Linear ticket adapter (`task ticket ...`, scheduler hooks), direct merge mode, launchd service~~; assistant skill polish
 5. Remote machines via `herdr --machine`
 6. Retro loop over transcripts
 7. TUI or web dashboard over the HTTP API
@@ -117,7 +144,7 @@ then fails the task and notifies you. Every transition is an event row.
 ## Testing
 
 `test/smoke.sh` runs an isolated taskd on port 7778 with `test/fake-claude.sh`
-standing in for `claude` (set via `FOREMAN_CLAUDE_BIN`). `test/fake-gh.sh` stands in for `gh`. It drives the happy,
+standing in for `claude` (set via `FOREMAN_CLAUDE_BIN`). `test/fake-gh.sh` stands in for `gh` and `test/fake-linear.ts` for Linear's API. It drives the happy,
 blocked/answer/resume, crash/retry, cancel, taskd-outage, and both implement
 pipelines (with a QA failure cycle, PR, and merge into a local bare remote)
 through real herdr tabs without calling a model.

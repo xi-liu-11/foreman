@@ -21,8 +21,11 @@ export interface ProjectConfig {
   speckit: boolean;
   deny: string[];          // extra disallowed tool patterns for this project
   concurrency: number;     // max concurrent running steps in this project
+  merge: "pr" | "direct";  // pr: push branch, open PR, gate, squash merge; direct: squash onto base and push, no PR or gate
   machine?: string;        // herdr saved machine label (slice 5)
-  tickets?: string;        // ticket provider: github | linear | jira (slice 4)
+  tickets?: string;        // ticket provider: linear (more later)
+  ticket_team?: string;    // provider team key for creating tickets, e.g. TAC
+  ticket_states: { start?: string; review?: string; done?: string }; // state names to transition to on task start / PR opened / merged
   notes?: string;          // free text injected into every worker prompt
 }
 
@@ -45,6 +48,7 @@ export interface Defaults {
 export interface ForemanConfig {
   server: { port: number; bind: string; token: string };
   defaults: Defaults;
+  tickets: { linear?: { api_key?: string } };
   projects: Record<string, ProjectConfig>;
 }
 
@@ -116,15 +120,22 @@ run_retention_days = 30
 # (push, merge, deploy, destructive git, sudo).
 deny = []
 
+# Ticket providers. Credentials live only here; workers go through "task ticket".
+# [tickets.linear]
+# api_key = "lin_api_..."   # or set LINEAR_API_KEY in taskd's environment
+
 # One table per project. Only listed projects can receive tasks.
 # [projects.dicer]
 # path = "~/git/dicer"
 # base_branch = "main"
 # verify = "browser"     # tests | browser | inspect
 # speckit = true
+# merge = "pr"           # pr (default): PR + merge gate; direct: squash onto base and push, no PR
 # concurrency = 2
 # deny = ["Bash(supabase *)"]
-# tickets = "github"
+# tickets = "linear"
+# ticket_team = "DIC"    # team key used when workers create tickets
+# ticket_states = { start = "In Progress", review = "In Review", done = "Done" }  # optional transitions
 # notes = "Three.js app; run with bun dev on port 5173."
 `;
 }
@@ -153,12 +164,16 @@ export function loadConfig(): ForemanConfig {
       speckit: Boolean(p.speckit ?? false),
       deny: Array.isArray(p.deny) ? p.deny.map(String) : [],
       concurrency: Number(p.concurrency ?? defaults.concurrency),
+      merge: p.merge === "direct" ? "direct" : "pr",
       machine: p.machine ? String(p.machine) : undefined,
       tickets: p.tickets ? String(p.tickets) : undefined,
+      ticket_team: p.ticket_team ? String(p.ticket_team) : undefined,
+      ticket_states: typeof p.ticket_states === "object" && p.ticket_states ? p.ticket_states : {},
       notes: p.notes ? String(p.notes) : undefined,
     };
   }
-  return { server, defaults, projects };
+  const tickets = { linear: raw.tickets?.linear ? { api_key: raw.tickets.linear.api_key ? String(raw.tickets.linear.api_key) : undefined } : undefined };
+  return { server, defaults, tickets, projects };
 }
 
 export function denyListFor(cfg: ForemanConfig, project: ProjectConfig): string[] {

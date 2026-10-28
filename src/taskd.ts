@@ -16,6 +16,7 @@ import { loadConfig, denyListFor, REPO_ROOT, RUNS_DIR, type ForemanConfig, type 
 import { pipelineFor, type PipelineStep } from "./pipelines";
 import * as herdr from "./herdr";
 import * as git from "./git";
+import { providerFor, ticketContext, type Ticket } from "./tickets";
 
 const cfg: ForemanConfig = loadConfig();
 const store = new Store();
@@ -36,6 +37,43 @@ function project(task: TaskRow): ProjectConfig {
 const pipelineSteps = (task: TaskRow) => JSON.parse(task.pipeline) as PipelineStep[];
 const agentDefs = (steps: PipelineStep[]) => steps.flatMap(p => p.type === "parallel" ? p.children : p.type === "agent" ? [p] : []);
 const runDirFor = (task: TaskRow, step: StepRow) => join(RUNS_DIR, task.id, `${step.name}-${step.attempt}`);
+
+// ---------------------------------------------------------------- tickets
+// Ticket side effects are best-effort: they are logged as events and never
+// change a task's state. Workers reach the provider through /tickets routes.
+
+const ticketCache = new Map<string, { at: number; t: Ticket }>();
+async function fetchTicket(proj: ProjectConfig, ref: string, maxAgeMs = 60_000): Promise<Ticket | null> {
+  const provider = providerFor(cfg, proj);
+  if (!provider) return null;
+  const key = `${proj.name}:${ref}`;
+  const hit = ticketCache.get(key);
+  if (hit && Date.now() - hit.at < maxAgeMs) return hit.t;
+  const t = await provider.get(ref);
+  ticketCache.set(key, { at: Date.now(), t });
+  return t;
+}
+
+// Comment on the task's ticket and optionally move it to a configured state.
+async function ticketHook(task: TaskRow, stage: "start" | "review" | "done" | "failed", body: string): Promise<void> {
+  if (!task.ticket) return;
+  const proj = project(task);
+  let provider; try { provider = providerFor(cfg, proj); } catch (e: any) { store.event("ticket.error", { stage, error: e.message }, task.id); return; }
+  if (!provider) return;
+  try {
+    await provider.comment(task.ticket, body);
+    store.event("ticket.comment", { ref: task.ticket, body }, task.id);
+    const state = stage === "failed" ? undefined : proj.ticket_states[stage];
+    if (state) {
+      const name = await provider.transition(task.ticket, state);
+      store.event("ticket.transition", { ref: task.ticket, state: name }, task.id);
+    }
+    ticketCache.delete(`${proj.name}:${task.ticket}`);
+  } catch (e: any) {
+    store.event("ticket.error", { stage, ref: task.ticket, error: e.message }, task.id);
+    log(`ticket ${task.ticket} (${stage}) failed: ${e.message}`);
+  }
+}
 
 // Failures of a step since the user last retried it. Blocked rows and resumed
 // attempts do not count, so block/answer cycles never eat the retry budget.
@@ -180,11 +218,22 @@ async function runSystem(task: TaskRow, ps: Extract<PipelineStep, { type: "syste
       store.updateTask(task.id, { pr_url: url });
       summary = `PR opened: ${url}`;
       await herdr.notify(`${task.id} PR opened`, url, "done");
+      await ticketHook(task, "review", `Foreman ${task.id}: PR opened ${url}`);
+    } else if (ps.action === "merge_direct") {
+      const impl = [...store.stepsForTask(task.id)].reverse().find(s => s.name === "implement" && s.status === "done" && s.result);
+      const implSummary = impl?.result ? JSON.parse(impl.result).summary ?? "" : "";
+      const message = `${task.title}\n\n${implSummary}\n\nForeman ${task.id}${task.ticket ? ` (${task.ticket})` : ""}, QA passed after ${task.qa_cycles + 1} cycle(s).`;
+      summary = await git.squashMergeDirect(proj, task.worktree, task.branch, message);
+      await git.removeWorktree(proj, task.worktree);
+      await git.deleteBranch(proj, task.branch);
+      await herdr.notify(`${task.id} merged`, summary, "done");
+      await ticketHook(task, "done", `Foreman ${task.id}: ${summary}`);
     } else {
       if (!task.pr_url) throw new Error("no PR URL recorded; open_pr must run first");
       await git.mergePr(proj, task.worktree, task.pr_url);
       await git.removeWorktree(proj, task.worktree);
       summary = `Merged ${task.pr_url} and removed worktree`;
+      await ticketHook(task, "done", `Foreman ${task.id}: merged ${task.pr_url}`);
     }
     tx(() => {
       store.updateStep(step.id, { status: "done", finished_at: now(), result: JSON.stringify({ status: "done", summary, verdict: "n/a", artifacts: [], notes_for_next: "" }) });
@@ -310,6 +359,7 @@ async function failTask(task: TaskRow, reason: string): Promise<void> {
   for (const s of running) cancelRequested.add(s.id);
   await herdr.notify(`${task.id} failed`, reason, "request");
   log(`failed ${task.id}: ${reason}`);
+  await ticketHook(task, "failed", `Foreman ${task.id} failed: ${reason}`);
 }
 
 // ---------------------------------------------------------------- results
@@ -356,9 +406,14 @@ async function handleResult(step: StepRow, body: any): Promise<{ step_status: st
   return { step_status: status, task_status: store.getTask(task.id)!.status };
 }
 
-function stepContext(step: StepRow) {
+async function stepContext(step: StepRow) {
   const task = store.getTask(step.task_id)!;
   const proj = project(task);
+  let ticket = "";
+  if (task.ticket) {
+    try { const t = await fetchTicket(proj, task.ticket); if (t) ticket = ticketContext(t); }
+    catch (e: any) { ticket = `## Linked ticket ${task.ticket}\n(could not be fetched: ${e.message})`; }
+  }
   const ps = pipelineSteps(task);
   const def = agentDefs(ps).find(p => p.name === step.name);
   const promptName = def?.prompt ?? step.name;
@@ -383,6 +438,7 @@ function stepContext(step: StepRow) {
     PROJECT_NOTES: proj.notes ? `- Project notes: ${proj.notes}` : "",
     SLUG: slugify(task.title), FEATURE: (task.feature_dir ?? "").replace(/^specs\//, ""), BASE_BRANCH: proj.base_branch,
     QA_CYCLE: String(task.qa_cycles + 1), QA_FEEDBACK: qaFeedback,
+    TICKET: ticket, TICKET_REF: task.ticket ?? "",
   };
   return { step, task, project: proj, defaults: cfg.defaults, deny: denyListFor(cfg, proj), prompt_vars, step_prompt };
 }
@@ -409,11 +465,20 @@ async function route(req: Request): Promise<Response> {
     return json(tasks.map(t => ({ ...t, open_blocks: store.openBlocks(t.id).length, cost_usd: store.stepsForTask(t.id).reduce((a, s) => a + s.cost_usd, 0) })));
   }
   if (p === "/tasks" && req.method === "POST") {
-    const { project: projName, kind, title, brief, priority, ticket } = body;
+    const { project: projName, kind, priority, ticket } = body;
+    let { title, brief } = body;
     if (!cfg.projects[projName]) return bad(`unknown project '${projName}'. Known: ${Object.keys(cfg.projects).join(", ") || "(none; add one to config.toml)"}`);
-    if (!title || !brief) return bad("title and brief are required");
     const proj = cfg.projects[projName];
-    let pipeline; try { pipeline = pipelineFor(kind, proj.speckit); } catch (e: any) { return bad(e.message); }
+    // A ticket can stand in for the title and brief.
+    if (ticket && (!title || !brief)) {
+      try {
+        const t = await fetchTicket(proj, ticket);
+        if (!t) return bad(`project '${projName}' has no ticket provider; give --title and --brief`);
+        title ||= t.title; brief ||= `${t.description || t.title}\n\n(From ticket ${t.ref}: ${t.url})`;
+      } catch (e: any) { return bad(`could not read ticket ${ticket}: ${e.message}`); }
+    }
+    if (!title || !brief) return bad("title and brief are required");
+    let pipeline; try { pipeline = pipelineFor(kind, proj.speckit, proj.merge); } catch (e: any) { return bad(e.message); }
     const id = store.nextTaskId();
     let wt: git.WorktreeInfo | null = null;
     if (pipeline.needs_worktree) {
@@ -429,7 +494,43 @@ async function route(req: Request): Promise<Response> {
     });
     log(`created ${task.id} [${kind}] ${title}`);
     setTimeout(tick, 50);
+    void ticketHook(task, "start", `Foreman picked this up as ${task.id} (${pipeline.kind}): ${title}`);
     return json(task, 201);
+  }
+  // Ticket routes: the project (or a task id, for workers) selects the provider.
+  if ((mm = m(/^\/tickets(?:\/([^/]+))?(?:\/(comment|transition))?$/))) {
+    const ref = mm[1] ? decodeURIComponent(mm[1]) : null;
+    const taskId = (req.method === "GET" ? url.searchParams.get("task") : body.task) || null;
+    const task = taskId ? store.getTask(taskId) : null;
+    const projName = task?.project ?? (req.method === "GET" ? url.searchParams.get("project") : body.project);
+    const proj = projName ? cfg.projects[projName] : undefined;
+    if (!proj) return bad("project (or task) required");
+    let provider; try { provider = providerFor(cfg, proj); } catch (e: any) { return bad(e.message); }
+    if (!provider) return bad(`project '${proj.name}' has no ticket provider configured`);
+    try {
+      if (req.method === "GET" && ref) return json(await provider.get(ref));
+      if (req.method === "POST" && !ref) {
+        if (!body.title) return bad("title required");
+        const t = await provider.create({ title: String(body.title), description: body.description ? String(body.description) : undefined, parent: body.parent ? String(body.parent) : undefined, team: proj.ticket_team });
+        if (task) store.event("ticket.created", { ref: t.ref, url: t.url, title: t.title, parent: body.parent ?? null }, task.id, body.step_id ?? null);
+        return json(t, 201);
+      }
+      if (req.method === "POST" && ref && mm[2] === "comment") {
+        if (!body.body) return bad("body required");
+        await provider.comment(ref, String(body.body));
+        if (task) store.event("ticket.comment", { ref, body: body.body }, task.id, body.step_id ?? null);
+        ticketCache.delete(`${proj.name}:${ref}`);
+        return json({ ok: true });
+      }
+      if (req.method === "POST" && ref && mm[2] === "transition") {
+        if (!body.state) return bad("state required");
+        const state = await provider.transition(ref, String(body.state));
+        if (task) store.event("ticket.transition", { ref, state }, task.id, body.step_id ?? null);
+        ticketCache.delete(`${proj.name}:${ref}`);
+        return json({ ok: true, state });
+      }
+    } catch (e: any) { return bad(e.message, 502); }
+    return bad("not found", 404);
   }
   if ((mm = m(/^\/tasks\/([^/]+)$/)) && req.method === "GET") {
     const task = store.getTask(mm[1]); if (!task) return bad("no such task", 404);
@@ -516,7 +617,7 @@ async function route(req: Request): Promise<Response> {
   if ((mm = m(/^\/steps\/(\d+)\/context$/)) && req.method === "GET") {
     const step = store.getStep(Number(mm[1])); if (!step) return bad("no such step", 404);
     const s = { ...step, resume_prompt: step.resume_prompt?.replace(/^\[user-retry\]\s*/, "") || null };
-    return json(stepContext(s));
+    return json(await stepContext(s));
   }
   if ((mm = m(/^\/steps\/(\d+)\/heartbeat$/)) && req.method === "POST") {
     const step = store.getStep(Number(mm[1])); if (!step) return bad("no such step", 404);

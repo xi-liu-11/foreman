@@ -40,6 +40,7 @@ const TASK_HELP = `task — Foreman task CLI
 
 User commands
   task create --project <name> --kind <kind> --title "<t>" [--brief "<text>" | --brief-file <path>] [--priority N] [--ticket <ref>]
+                                  with --ticket, title and brief default to the ticket's
   task ls [--all] [--project <name>] [--status queued,running,...]
   task show <id>
   task log <id> [step] [--attempt N] [--tail N]
@@ -51,11 +52,16 @@ User commands
   task cancel <id>
   task kinds                      list task kinds (pipelines)
   task projects                   list registered projects
+  task ticket show <ref> --project <name>
+  task ticket comment <ref> "<body>" --project <name>
+  task ticket transition <ref> "<state>" --project <name>
+  task ticket create --title "<t>" [--body "<text>"] [--parent <ref>] --project <name>
 
 Worker commands (task and step come from FOREMAN_TASK / FOREMAN_STEP)
   task note "<text>"
   task block "<question>"
   task artifact add <path> [--kind <kind>] [--note "<text>"]
+  task ticket show|comment|transition|create ...   (ref defaults to the task's ticket)
   task show                       current task
 
 Add --json to any command for machine-readable output.`;
@@ -66,7 +72,9 @@ const FOREMAN_HELP = `foreman — scheduler and worker runner
   foreman run-step <id>    run one pipeline step (used by taskd)
   foreman init             create ~/.foreman/config.toml if missing and print its path
   foreman config           print the loaded configuration
-  foreman health           check taskd`;
+  foreman health           check taskd
+  foreman service install|uninstall|restart|stop|status
+                           run taskd under launchd so it survives terminals and reboots`;
 
 async function taskMain(): Promise<void> {
   const [cmd, ...rest] = positional();
@@ -80,11 +88,12 @@ async function taskMain(): Promise<void> {
     case "create": {
       const project = opt("project") ?? die("--project required");
       const kind = opt("kind") ?? die("--kind required");
-      const title = opt("title") ?? die("--title required");
+      const ticket = opt("ticket");
+      const title = opt("title") ?? (ticket ? undefined : die("--title required (or --ticket)"));
       const briefFile = opt("brief-file");
       const brief = briefFile ? await Bun.file(briefFile).text() : opt("brief") ?? rest.join(" ") ?? "";
-      if (!brief.trim()) die("--brief or --brief-file required");
-      const t = await client.post("/tasks", { project, kind, title, brief, priority: opt("priority"), ticket: opt("ticket") });
+      if (!brief.trim() && !ticket) die("--brief or --brief-file required (or --ticket)");
+      const t = await client.post("/tasks", { project, kind, title, brief: brief.trim() || undefined, priority: opt("priority"), ticket });
       out(t, () => `created ${t.id} [${t.kind}] ${t.title}`);
       return;
     }
@@ -196,7 +205,43 @@ async function taskMain(): Promise<void> {
       console.log(`artifact #${a.id} registered`);
       return;
     }
-    case "ticket": die("ticket integration arrives in slice 4; record what you would have done with `task note` instead");
+    case "ticket": {
+      const sub = rest[0];
+      const scope: Record<string, string | undefined> = envTask ? { task: envTask } : { project: opt("project") };
+      if (!scope.task && !scope.project) die("--project required (or run inside a Foreman task)");
+      const q = `?${new URLSearchParams(scope as Record<string, string>)}`;
+      const defaultRef = async () => envTask ? (await client.get(`/tasks/${envTask}`)).task.ticket ?? die("this task has no linked ticket; give the ref") : die("ticket ref required");
+      // Ref is optional inside a task: `task ticket comment "text"` targets the linked ticket.
+      const refAndText = async (needText: boolean) => {
+        const a = rest.slice(1);
+        if (a.length >= 2 || (a.length === 1 && !needText)) return [a[0], a.slice(1).join(" ")];
+        return [await defaultRef(), a.join(" ")];
+      };
+      if (sub === "show") {
+        const [ref] = await refAndText(false);
+        const t = await client.get(`/tickets/${encodeURIComponent(ref)}${q}`);
+        out(t, () => `${t.ref} [${t.state}] ${t.title}
+${t.url}
+
+${t.description}`);
+        return;
+      }
+      if (sub === "comment") {
+        const [ref, text] = await refAndText(true); if (!text) die("comment body required");
+        await client.post(`/tickets/${encodeURIComponent(ref)}/comment`, { ...scope, body: text, step_id: envStep });
+        console.log(`commented on ${ref}`); return;
+      }
+      if (sub === "transition") {
+        const [ref, state] = await refAndText(true); if (!state) die("state name required");
+        const r = await client.post(`/tickets/${encodeURIComponent(ref)}/transition`, { ...scope, state, step_id: envStep });
+        console.log(`${ref} -> ${r.state}`); return;
+      }
+      if (sub === "create") {
+        const t = await client.post("/tickets", { ...scope, title: opt("title") ?? die("--title required"), description: opt("body"), parent: opt("parent"), step_id: envStep });
+        out(t, () => `created ${t.ref}: ${t.url}`); return;
+      }
+      die("usage: task ticket show|comment|transition|create ...");
+    }
     default: die(`unknown command '${cmd}'\n\n${TASK_HELP}`);
   }
 }
@@ -210,6 +255,7 @@ async function foremanMain(): Promise<void> {
     case "init": ensureHome(); console.log(CONFIG_PATH); return;
     case "config": console.log(JSON.stringify(loadConfig(), null, 2)); return;
     case "health": { const c = TaskdClient.fromEnvOrConfig(); console.log(JSON.stringify(await c.get("/health"))); return; }
+    case "service": { const { serviceCommand } = await import("./service"); await serviceCommand(rest[0]); return; }
     default: die(`unknown command '${cmd}'\n\n${FOREMAN_HELP}`);
   }
 }
