@@ -37,6 +37,8 @@ base_branch = "main"
 verify = "browser"      # tests | browser | inspect
 speckit = true
 concurrency = 2
+resources = ["ios-sim", "android-emu"]   # shared devices workers lease
+lease_max_minutes = 45                    # flag holds longer than this
 deny = ["Bash(supabase *)"]
 notes = "Three.js app; run with bun dev on port 5173."
 ```
@@ -62,7 +64,8 @@ task cancel T0004
 ```
 
 Workers use the same CLI with `FOREMAN_TASK` and `FOREMAN_STEP` set:
-`task note`, `task block`, `task artifact add`, `task show`, `task ticket ...`.
+`task note`, `task block`, `task artifact add`, `task show`, `task ticket ...`,
+`task lease`, `task release`, `task leases`.
 
 ### Tickets (Linear)
 
@@ -137,6 +140,31 @@ expiry, non-zero exit, timeout, or a `failed` result mark the step failed and
 the scheduler retries, resuming the same session first, up to `max_attempts`,
 then fails the task and notifies you. Every transition is an event row.
 
+### Resource leases
+
+A resource lease is an exclusive, named hold on a shared device (a simulator, an
+emulator, a browser profile) so parallel workers take turns instead of fighting
+over it. Workers use `task lease <name> [--wait N] [--reason ..]`,
+`task release <name>` and `task leases`.
+
+- The key is project + machine (the step's herdr machine, or local) + resource.
+  First come, first served. Holders and the queue are persisted in SQLite
+  (`resource_leases`); grants happen on request, on release, and every tick.
+- A lease is released automatically when the step ends (done, failed, blocked,
+  heartbeat lease expired, task cancelled or failed), plus a sweep each tick.
+- `--wait` exits with code 3 when the wait runs out; the worker keeps its place
+  in the queue and runs the command again.
+- Holds longer than `lease_max_minutes` (default 45) raise a `lease.overdue`
+  event and a dashboard highlight. They are not released.
+- Not the heartbeat lease (`lease_sec`) and not `concurrency`: `concurrency`
+  still limits steps, leases limit devices.
+- Developer and test-analyst prompts get a "Shared devices" paragraph when the
+  project declares `resources` or verifies in a browser (implicit `browser`).
+  Undeclared names are granted with a warning.
+- Events: `lease.requested`, `lease.granted`, `lease.released`, `lease.overdue`.
+
+A running taskd must be restarted to pick this up: `foreman service restart`.
+
 ## Roadmap
 
 1. ~~DB, CLI, taskd, one research task in a herdr tab~~
@@ -147,8 +175,11 @@ then fails the task and notifies you. Every transition is an event row.
 6. Retro loop over transcripts
 7. ~~Web dashboard over the HTTP API~~ (`foreman dashboard`)
 8. Merge conflicts: when the rebase in `merge_direct` conflicts, insert a developer `resolve` step (rebase, resolve, run the suite) and retry the merge, instead of failing the task (seen on T0004 after 026 landed first)
+9. ~~Resource leases: workers take turns on shared devices (`task lease`)~~
 
 ## Testing
+
+`bun test` runs `test/leases.test.ts`, the lease policy against a temp store.
 
 `test/smoke.sh` runs an isolated taskd on port 7778 with `test/fake-claude.sh`
 standing in for `claude` (set via `FOREMAN_CLAUDE_BIN`). `test/fake-gh.sh` stands in for `gh` and `test/fake-linear.ts` for Linear's API. It drives the happy,

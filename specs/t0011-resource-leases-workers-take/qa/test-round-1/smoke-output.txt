@@ -1,0 +1,98 @@
+T0001 step=1
+T0002 step=2
+T0003 step=3
+T0004 step=4
+T0005 step=5
+T0006 step=6
+T0007 step=7
+== S8 fencing
+$ curl POST /steps/4/lease {"resource":"ios-sim"}
+{"error":"step is not running"}  [http 409]
+$ curl POST /steps/5/lease {"resource":"ios-sim"}
+{"error":"step is not running"}  [http 409]
+$ curl GET /leases?project=P 
+[]  [http 200]
+== S10 grant / already held / undeclared warning
+$ FOREMAN_TASK=T0001 FOREMAN_STEP=1 task lease ios-sim --reason maestro flows
+lease ios-sim granted
+[exit 0]
+$ FOREMAN_TASK=T0001 FOREMAN_STEP=1 task lease ios-sim
+lease ios-sim granted
+[exit 0]
+$ FOREMAN_TASK=T0001 FOREMAN_STEP=1 task lease ios-sm
+warning: 'ios-sm' is not in project P's resources (ios-sim, android-emu); typo?
+lease ios-sm granted
+[exit 0]
+$ FOREMAN_TASK=T0001 FOREMAN_STEP=1 task release ios-sm
+released ios-sm after 0s
+[exit 0]
+== S10 --wait 5 exits 3 and keeps place
+$ FOREMAN_TASK=T0002 FOREMAN_STEP=2 task lease ios-sim --wait 5
+waiting for ios-sim: held by T0001/test#1 for 0s (maestro flows); you are #1 of 1
+still queued for ios-sim at #1; run task lease ios-sim again to keep your place, or task release ios-sim to leave the queue
+[exit 3]
+$ FOREMAN_TASK=T0003 FOREMAN_STEP=3 task lease ios-sim --wait 1
+waiting for ios-sim: held by T0001/test#1 for 5s (maestro flows); you are #2 of 2
+still queued for ios-sim at #2; run task lease ios-sim again to keep your place, or task release ios-sim to leave the queue
+[exit 3]
+$ FOREMAN_TASK=T0002 FOREMAN_STEP=2 task leases
+PROJECT        MACHINE  RESOURCE     STATE      TASK/STEP              AGE   REASON
+P              local    ios-sim      held       T0001/test#1           6s    maestro flows
+P              local    ios-sim      waiting #1 T0002/test#1           6s    
+P              local    ios-sim      waiting #2 T0003/test#1           1s    
+[exit 0]
+leases:
+  ios-sim      waiting #1 for test#1 (held by T0001/test#1 for 6s (maestro flows))
+recent events:
+  23:54:26 lease.requested      {"resource":"ios-sim","machine":"local","reason":null,"position":1}
+[exit 0]
+== S5 scoping: P/mini and Q/local are not blocked
+$ FOREMAN_TASK=T0006 FOREMAN_STEP=6 task lease ios-sim --wait 1
+lease ios-sim granted
+[exit 0]
+$ FOREMAN_TASK=T0007 FOREMAN_STEP=7 task lease ios-sim --wait 1
+lease ios-sim granted
+[exit 0]
+== S10 indefinite wait: B waits, A releases after 40s
+$ FOREMAN_TASK=T0002 FOREMAN_STEP=2 task lease ios-sim
+waiting for ios-sim: held by T0001/test#1 for 7s (maestro flows); you are #1 of 2
+waiting for ios-sim: held by T0001/test#1 for 37s (maestro flows); you are #1 of 2
+$ FOREMAN_TASK=T0001 FOREMAN_STEP=1 task release ios-sim
+released ios-sim after 47s
+[exit 0]
+lease ios-sim granted
+[exit 0]
+== S3 cancel route releases holder T0002, T0003 granted
+$ curl POST /tasks/T0002/cancel {}
+{"ok":true}  [http 200]
+$ FOREMAN_TASK=T0003 FOREMAN_STEP=3 task lease ios-sim --wait 1
+lease ios-sim granted
+[exit 0]
+$ FOREMAN_TASK=T0003 FOREMAN_STEP=3 task leases --project P
+PROJECT        MACHINE  RESOURCE     STATE      TASK/STEP              AGE   REASON
+P              local    ios-sim      held       T0003/test#1           0s    
+P              mini     ios-sim      held       T0006/test#1           41s   
+[exit 0]
+== dashboard serves devices block
+7
+== lease events
+1|T0001|1|lease.requested|{"resource":"ios-sim","machine":"local","reason":"maestro flows","position":0}
+2|T0001|1|lease.granted|{"resource":"ios-sim","machine":"local","waited_sec":0}
+3|T0001|1|lease.requested|{"resource":"ios-sm","machine":"local","reason":null,"position":0,"undeclared":true}
+4|T0001|1|lease.granted|{"resource":"ios-sm","machine":"local","waited_sec":0}
+5|T0001|1|lease.released|{"resource":"ios-sm","machine":"local","held_sec":0,"why":"released"}
+6|T0002|2|lease.requested|{"resource":"ios-sim","machine":"local","reason":null,"position":1}
+7|T0003|3|lease.requested|{"resource":"ios-sim","machine":"local","reason":null,"position":2}
+8|T0006|6|lease.requested|{"resource":"ios-sim","machine":"mini","reason":null,"position":0}
+9|T0006|6|lease.granted|{"resource":"ios-sim","machine":"mini","waited_sec":0}
+10|T0007|7|lease.requested|{"resource":"ios-sim","machine":"local","reason":null,"position":0}
+11|T0007|7|lease.granted|{"resource":"ios-sim","machine":"local","waited_sec":0}
+12|T0001|1|lease.released|{"resource":"ios-sim","machine":"local","held_sec":47,"why":"released"}
+13|T0002|2|lease.granted|{"resource":"ios-sim","machine":"local","waited_sec":46}
+15|T0002|2|lease.released|{"resource":"ios-sim","machine":"local","held_sec":0,"why":"task cancelled"}
+16|T0003|3|lease.granted|{"resource":"ios-sim","machine":"local","waited_sec":42}
+== taskd log
+23:54:24 startup: extended 6 running lease(s) by 3600s
+23:54:24 taskd listening on http://127.0.0.1:17791 (herdr: yes)
+23:54:24 projects: P, Q
+23:54:26 T0001/test#1: 'ios-sm' is not in project P's resources (ios-sim, android-emu); typo?

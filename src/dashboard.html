@@ -42,6 +42,7 @@
 <body>
 <h1>Foreman <small id="status">connecting…</small></h1>
 <section><h2>Needs you</h2><div id="inbox" class="empty">nothing</div></section>
+<section id="devices-sec"><h2>Devices</h2><div id="devices"></div></section>
 <section><h2>Active</h2><div id="active" class="empty">no active tasks</div></section>
 <section><h2>Recent</h2><div id="recent"></div></section>
 <script>
@@ -52,6 +53,7 @@ const api = p => fetch(p, { headers: { authorization: "Bearer " + token } }).the
 const esc = s => String(s ?? "").replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 const ago = iso => { if (!iso) return ""; const s = Math.max(0, (Date.now() - Date.parse(iso)) / 1000); return s < 60 ? Math.round(s) + "s" : s < 3600 ? Math.round(s / 60) + "m" : s < 86400 ? Math.round(s / 3600) + "h" : Math.round(s / 86400) + "d"; };
 const dur = (a, b) => { if (!a) return ""; const s = ((b ? Date.parse(b) : Date.now()) - Date.parse(a)) / 1000; return s < 60 ? Math.round(s) + "s" : Math.round(s / 60) + "m"; };
+const secs = n => { const s = Math.max(0, Number(n) || 0); return s < 60 ? Math.round(s) + "s" : s < 3600 ? Math.round(s / 60) + "m" : Math.round(s / 3600) + "h"; };
 const money = n => "$" + Number(n || 0).toFixed(2);
 
 function pipelineSteps(t, steps) {
@@ -65,24 +67,52 @@ function pipelineSteps(t, steps) {
   }).join("");
 }
 
+// Devices: one card per project that declares resources (or browser verify) or has lease rows
+function devices(projects, leases) {
+  const who = r => `${r.task_id} ${r.step}#${r.attempt}`;
+  const cards = projects.map(p => {
+    const declared = [...(p.resources ?? []), ...(p.verify === "browser" ? ["browser"] : [])];
+    const rows = leases.filter(l => l.project === p.name);
+    const keys = new Map(); // "machine\0resource" -> {machine, resource}
+    for (const r of declared) keys.set("local\0" + r, { machine: "local", resource: r });
+    for (const l of rows) keys.set(l.machine + "\0" + l.resource, { machine: l.machine, resource: l.resource });
+    if (!keys.size) return "";
+    const trs = [...keys.values()].map(k => {
+      const mine = rows.filter(l => l.machine === k.machine && l.resource === k.resource);
+      const held = mine.find(l => l.state === "held");
+      const queue = mine.filter(l => l.state === "waiting").sort((a, b) => a.position - b.position);
+      const holder = held ? `<span class="${held.overdue ? "err" : ""}">${esc(who(held))} · ${secs(held.held_sec)}${held.reason ? " · " + esc(held.reason) : ""}${held.overdue ? " (overdue)" : ""}</span>` : `<span class="empty">free</span>`;
+      return `<tr><td>${k.machine !== "local" ? `<span class="meta">${esc(k.machine)}</span> ` : ""}${esc(k.resource)}</td><td>${holder}</td><td class="meta">${queue.map(q => esc(who(q))).join(", ")}</td></tr>`;
+    }).join("");
+    return `<div class="card"><div class="title">${esc(p.name)}</div><table>${trs}</table></div>`;
+  }).join("");
+  return cards || `<span class="empty">no shared devices</span>`;
+}
+
 function card(t, d) {
   const steps = d?.steps ?? [];
-  const notes = (d?.events ?? []).filter(e => e.type === "note" || e.type === "task.qa_fail" || e.type === "step.failed" || e.type === "ticket.comment").slice(-4);
+  const notes = (d?.events ?? []).filter(e => e.type === "note" || e.type === "task.qa_fail" || e.type === "step.failed" || e.type === "ticket.comment" || e.type === "lease.overdue").slice(-4);
+  const lease = (d?.leases ?? []).map(l => l.state === "held" ? `holds ${esc(l.resource)} ${secs(l.held_sec)}` : `waiting #${l.position} for ${esc(l.resource)}`).join(", ");
   const cur = steps.filter(s => s.status === "running").map(s => `${s.name} for ${dur(s.started_at)}${s.turns ? "" : ""}`).join(", ");
   return `<div class="card">
     <div class="row"><span class="id">${t.id}</span><span class="title">${esc(t.title)}</span><span class="badge ${t.status}">${t.status}</span>
       <span class="meta">${esc(t.project)} · ${t.kind} · ${money(t.cost_usd)} · ${ago(t.created_at)} ago${cur ? " · " + cur : ""}${t.branch ? " · " + esc(t.branch) : ""}${t.pr_url ? ` · <a href="${esc(t.pr_url)}">PR</a>` : ""}</span></div>
     ${d ? `<div class="steps">${pipelineSteps(t, steps)}</div>` : ""}
     ${(d?.blocks ?? []).map(b => `<div class="ask"><b>Question</b> (block ${b.id}): ${esc(b.question)}</div>`).join("")}
+    ${lease ? `<div class="meta">${lease}</div>` : ""}
     ${t.status === "gate" ? `<div class="ask"><b>Waiting for approval</b> at ${esc(t.current_step)}</div>` : ""}
     ${t.status === "failed" && t.result ? `<div class="ask err">${esc(JSON.parse(t.result).error || "")}</div>` : ""}
-    ${notes.map(e => { const x = JSON.parse(e.data); const txt = e.type === "note" ? x.text : e.type === "task.qa_fail" ? `QA cycle ${x.cycle} failed: ${x.failed.join(", ")}` : e.type === "ticket.comment" ? `ticket ${x.ref}: ${x.body}` : `${x.step} failed: ${x.error}`; return `<p class="note"><time>${e.ts.slice(11, 16)}</time>${esc(txt)}</p>`; }).join("")}
+    ${notes.map(e => { const x = JSON.parse(e.data); const txt = e.type === "note" ? x.text : e.type === "task.qa_fail" ? `QA cycle ${x.cycle} failed: ${x.failed.join(", ")}` : e.type === "ticket.comment" ? `ticket ${x.ref}: ${x.body}` : e.type === "lease.overdue" ? `${x.resource} held ${x.held_min}m (max ${x.max_min})` : `${x.step} failed: ${x.error}`; return `<p class="note"><time>${e.ts.slice(11, 16)}</time>${esc(txt)}</p>`; }).join("")}
   </div>`;
 }
 
 async function refresh() {
   try {
     const all = await api("/tasks?all=1");
+    const [leases, projects] = await Promise.all([api("/leases"), api("/projects")]);
+    const dev = devices(projects, leases);
+    document.getElementById("devices").innerHTML = dev;
+    document.getElementById("devices-sec").hidden = dev.startsWith("<span");
     const active = all.filter(t => ["queued", "running", "blocked", "gate"].includes(t.status));
     const details = Object.fromEntries(await Promise.all(active.map(async t => [t.id, await api("/tasks/" + t.id)])));
     const needs = active.filter(t => t.status === "gate" || t.open_blocks > 0).concat(all.filter(t => t.status === "failed").slice(0, 5));

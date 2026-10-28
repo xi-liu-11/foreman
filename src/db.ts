@@ -79,6 +79,22 @@ export interface EventRow {
   data: string;
 }
 
+// Resource lease (task lease) on a shared device; not the heartbeat lease in
+// steps.lease_until. A row is the holder when granted_at is set, a waiter
+// otherwise; waiters are served in id order.
+export interface LeaseRow {
+  id: number;
+  project: string;
+  machine: string;
+  resource: string;
+  task_id: string;
+  step_id: number;
+  reason: string | null;
+  requested_at: string;
+  granted_at: string | null;
+  overdue_at: string | null;
+}
+
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
@@ -132,6 +148,16 @@ CREATE TABLE IF NOT EXISTS events (
   type TEXT NOT NULL, data TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS events_task ON events(task_id, id);
+CREATE TABLE IF NOT EXISTS resource_leases (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project TEXT NOT NULL, machine TEXT NOT NULL, resource TEXT NOT NULL,
+  task_id TEXT NOT NULL REFERENCES tasks(id),
+  step_id INTEGER NOT NULL REFERENCES steps(id),
+  reason TEXT,
+  requested_at TEXT NOT NULL, granted_at TEXT, overdue_at TEXT,
+  UNIQUE (project, machine, resource, step_id)
+);
+CREATE INDEX IF NOT EXISTS resource_leases_key ON resource_leases(project, machine, resource, id);
 `;
 
 export const now = () => new Date().toISOString();
@@ -253,6 +279,40 @@ export class Store {
   }
   artifactsForTask(task_id: string): ArtifactRow[] {
     return this.db.query("SELECT * FROM artifacts WHERE task_id = ? ORDER BY id").all(task_id) as ArtifactRow[];
+  }
+
+  // --- resource leases (policy lives in leases.ts) ---
+  insertLease(l: { project: string; machine: string; resource: string; task_id: string; step_id: number; reason: string | null }): LeaseRow {
+    const r = this.db.run("INSERT INTO resource_leases (project, machine, resource, task_id, step_id, reason, requested_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [l.project, l.machine, l.resource, l.task_id, l.step_id, l.reason, now()]);
+    return this.db.query("SELECT * FROM resource_leases WHERE id = ?").get(Number(r.lastInsertRowid)) as LeaseRow;
+  }
+  getLease(step_id: number, project: string, machine: string, resource: string): LeaseRow | null {
+    return this.db.query("SELECT * FROM resource_leases WHERE step_id = ? AND project = ? AND machine = ? AND resource = ?")
+      .get(step_id, project, machine, resource) as LeaseRow | null;
+  }
+  leasesForKey(project: string, machine: string, resource: string): LeaseRow[] {
+    return this.db.query("SELECT * FROM resource_leases WHERE project = ? AND machine = ? AND resource = ? ORDER BY id")
+      .all(project, machine, resource) as LeaseRow[];
+  }
+  leasesForStep(step_id: number): LeaseRow[] {
+    return this.db.query("SELECT * FROM resource_leases WHERE step_id = ? ORDER BY id").all(step_id) as LeaseRow[];
+  }
+  leasesForTask(task_id: string): LeaseRow[] {
+    return this.db.query("SELECT * FROM resource_leases WHERE task_id = ? ORDER BY id").all(task_id) as LeaseRow[];
+  }
+  listLeases(filter: { project?: string } = {}): LeaseRow[] {
+    if (filter.project) return this.db.query("SELECT * FROM resource_leases WHERE project = ? ORDER BY project, machine, resource, id").all(filter.project) as LeaseRow[];
+    return this.db.query("SELECT * FROM resource_leases ORDER BY project, machine, resource, id").all() as LeaseRow[];
+  }
+  grantLease(id: number): void {
+    this.db.run("UPDATE resource_leases SET granted_at = ? WHERE id = ?", [now(), id]);
+  }
+  markLeaseOverdue(id: number): void {
+    this.db.run("UPDATE resource_leases SET overdue_at = ? WHERE id = ?", [now(), id]);
+  }
+  deleteLease(id: number): void {
+    this.db.run("DELETE FROM resource_leases WHERE id = ?", [id]);
   }
 
   eventsForTask(task_id: string, limit = 200): EventRow[] {

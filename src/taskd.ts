@@ -12,7 +12,8 @@
 import { join } from "node:path";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { Store, type TaskRow, type StepRow, now } from "./db";
-import { loadConfig, denyListFor, REPO_ROOT, RUNS_DIR, type ForemanConfig, type ProjectConfig } from "./config";
+import { loadConfig, denyListFor, deviceResources, REPO_ROOT, RUNS_DIR, type ForemanConfig, type ProjectConfig } from "./config";
+import { requestLease, releaseLease, releaseStepLeases, reconcileLeases, leaseView, devicePrompt } from "./leases";
 import { pipelineFor, type PipelineStep } from "./pipelines";
 import * as herdr from "./herdr";
 import * as git from "./git";
@@ -37,6 +38,11 @@ function project(task: TaskRow): ProjectConfig {
 const pipelineSteps = (task: TaskRow) => JSON.parse(task.pipeline) as PipelineStep[];
 const agentDefs = (steps: PipelineStep[]) => steps.flatMap(p => p.type === "parallel" ? p.children : p.type === "agent" ? [p] : []);
 const runDirFor = (task: TaskRow, step: StepRow) => join(RUNS_DIR, task.id, `${step.name}-${step.attempt}`);
+// R2: only the current running attempt of an active task may heartbeat or take resource leases.
+const isLive = (step: StepRow) => {
+  const task = store.getTask(step.task_id);
+  return step.status === "running" && store.latestStep(step.task_id, step.name)?.id === step.id && Boolean(task && ["running", "queued", "blocked"].includes(task.status));
+};
 
 // ---------------------------------------------------------------- tickets
 // Ticket side effects are best-effort: they are logged as events and never
@@ -107,6 +113,7 @@ async function expireLeases(): Promise<void> {
     log(`lease expired for ${s.task_id}/${s.name}#${s.attempt}`);
     store.updateStep(s.id, { status: "failed", finished_at: now(), error: "lease expired: runner stopped heartbeating" });
     store.event("step.lease_expired", { step: s.name, attempt: s.attempt }, s.task_id, s.id);
+    releaseStepLeases(store, s.id, "heartbeat lease expired");
     cancelRequested.add(s.id);
     if (s.tab_id) await herdr.closeTab(s.tab_id, s.machine);
   }
@@ -117,6 +124,8 @@ async function tick(): Promise<void> {
   ticking = true;
   try {
     await expireLeases();
+    try { reconcileLeases(store, p => cfg.projects[p]?.lease_max_minutes ?? cfg.defaults.lease_max_minutes); }
+    catch (e: any) { log("reconcile resource leases failed:", e.message); store.event("scheduler.error", { error: `resource leases: ${e.message}` }); }
     for (const task of store.listTasks({ status: ["queued", "running", "blocked"] })) {
       try { await advance(task); } catch (e: any) { log(`advance ${task.id} failed:`, e.message); store.event("scheduler.error", { error: e.message }, task.id); }
     }
@@ -359,6 +368,7 @@ async function failTask(task: TaskRow, reason: string): Promise<void> {
   tx(() => {
     store.updateTask(task.id, { status: "failed", result: JSON.stringify({ error: reason }) });
     store.event("task.failed", { reason }, task.id);
+    for (const s of running) releaseStepLeases(store, s.id, "task failed");
   });
   // R2: siblings still running (parallel QA) must stop.
   for (const s of running) cancelRequested.add(s.id);
@@ -398,6 +408,7 @@ async function handleResult(step: StepRow, body: any): Promise<{ step_status: st
       if (!store.blocksForStep(step.id).length) store.insertBlock(task.id, step.id, so?.summary ?? "Worker reported blocked without a question.");
       if (task.status !== "cancelled") store.updateTask(task.id, { status: "blocked" });
     }
+    releaseStepLeases(store, step.id, `step ${status}`);
   });
   cancelRequested.delete(step.id);
 
@@ -443,6 +454,7 @@ async function stepContext(step: StepRow) {
     PROJECT_NOTES: proj.notes ? `- Project notes: ${proj.notes}` : "",
     SLUG: slugify(task.title), FEATURE: (task.feature_dir ?? "").replace(/^specs\//, ""), BASE_BRANCH: proj.base_branch,
     QA_CYCLE: String(task.qa_cycles + 1), QA_FEEDBACK: qaFeedback,
+    DEVICE_LEASES: devicePrompt(deviceResources(proj), step.role),
     TICKET: ticket, TICKET_REF: task.ticket ?? "",
     TICKET_HANDOFF: task.ticket
       ? `\nThen post the Summary and To verify sections as a comment on ticket ${task.ticket} with \`task ticket comment "<text>"\` (one quoted argument, markdown allowed)${proj.ticket_states.review ? ` and move it with \`task ticket transition "${proj.ticket_states.review}"\`` : ""}. The ticket's readers are not developers; write for them.`
@@ -549,7 +561,7 @@ async function route(req: Request): Promise<Response> {
   }
   if ((mm = m(/^\/tasks\/([^/]+)$/)) && req.method === "GET") {
     const task = store.getTask(mm[1]); if (!task) return bad("no such task", 404);
-    return json({ task, steps: store.stepsForTask(task.id), blocks: store.openBlocks(task.id), artifacts: store.artifactsForTask(task.id), events: store.eventsForTask(task.id, 50).reverse() });
+    return json({ task, steps: store.stepsForTask(task.id), blocks: store.openBlocks(task.id), artifacts: store.artifactsForTask(task.id), leases: store.leasesForTask(task.id).map(r => leaseView(store, r)), events: store.eventsForTask(task.id, 50).reverse() });
   }
   if ((mm = m(/^\/tasks\/([^/]+)\/(cancel|approve|retry|note|artifacts|blocks)$/)) && req.method === "POST") {
     const task = store.getTask(mm[1]); if (!task) return bad("no such task", 404);
@@ -559,6 +571,7 @@ async function route(req: Request): Promise<Response> {
       tx(() => {
         for (const b of store.openBlocks(task.id)) store.answerBlock(b.id, "(task cancelled)");
         store.updateTask(task.id, { status: "cancelled" }); store.event("task.cancelled", {}, task.id);
+        for (const s of running) releaseStepLeases(store, s.id, "task cancelled");
       });
       for (const s of running) cancelRequested.add(s.id);
       return json({ ok: true });
@@ -636,11 +649,33 @@ async function route(req: Request): Promise<Response> {
   }
   if ((mm = m(/^\/steps\/(\d+)\/heartbeat$/)) && req.method === "POST") {
     const step = store.getStep(Number(mm[1])); if (!step) return bad("no such step", 404);
-    const task = store.getTask(step.task_id)!;
     // R2: anything that is not the current running attempt of an active task must stop.
-    const stale = step.status !== "running" || store.latestStep(task.id, step.name)?.id !== step.id || !["running", "queued", "blocked"].includes(task.status);
+    const stale = !isLive(step);
     if (!stale) store.updateStep(step.id, { lease_until: addSeconds(cfg.defaults.lease_sec) });
     return json({ ok: true, cancel: stale || cancelRequested.has(step.id) });
+  }
+  if ((mm = m(/^\/steps\/(\d+)\/lease$/)) && req.method === "POST") {
+    const step = store.getStep(Number(mm[1])); if (!step) return bad("no such step", 404);
+    const resource = typeof body.resource === "string" ? body.resource.trim() : "";
+    if (!resource) return bad("resource required");
+    if (!isLive(step)) return json({ error: "step is not running" }, 409);
+    const task = store.getTask(step.task_id)!;
+    const proj = cfg.projects[task.project];
+    const declared = proj?.resources.length ? deviceResources(proj) : [];
+    const state = requestLease(store, task, step, resource, body.reason ? String(body.reason) : null, declared);
+    if (state.warning) log(`${task.id}/${step.name}#${step.attempt}: ${state.warning}`);
+    return json(state);
+  }
+  if ((mm = m(/^\/steps\/(\d+)\/release$/)) && req.method === "POST") {
+    const step = store.getStep(Number(mm[1])); if (!step) return bad("no such step", 404);
+    const resource = typeof body.resource === "string" ? body.resource.trim() : "";
+    if (!resource) return bad("resource required");
+    return json({ ok: true, ...releaseLease(store, step, resource) });
+  }
+  if (p === "/leases" && req.method === "GET") {
+    const taskId = url.searchParams.get("task");
+    const projName = url.searchParams.get("project") ?? (taskId ? store.getTask(taskId)?.project : undefined) ?? undefined;
+    return json(store.listLeases({ project: projName }).map(r => leaseView(store, r)));
   }
   if ((mm = m(/^\/steps\/(\d+)\/result$/)) && req.method === "POST") {
     const step = store.getStep(Number(mm[1])); if (!step) return bad("no such step", 404);

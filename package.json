@@ -6,6 +6,7 @@
   "private": true,
   "scripts": {
     "taskd": "bun src/taskd.ts",
+    "test": "bun test test/",
     "typecheck": "bunx tsc --noEmit"
   },
   "devDependencies": {

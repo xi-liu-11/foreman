@@ -28,6 +28,8 @@ The `task` command talks to the Foreman scheduler. It already knows your task an
 5. Do not ask the user anything in prose. If truly blocked, use `task block`.
 6. When done, your final message MUST be the structured output JSON (the harness enforces the schema): status, summary, artifacts, and next-step notes for the following worker. Make the summary useful to someone who did not see this session.
 
+{{DEVICE_LEASES}}
+
 ## Step instructions
 {{STEP_PROMPT}}
 

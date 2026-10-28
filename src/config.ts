@@ -29,6 +29,8 @@ export interface ProjectConfig {
   ticket_team?: string;    // provider team key for creating tickets, e.g. TAC
   ticket_states: { start?: string; review?: string; done?: string }; // state names to transition to on task start / PR opened / merged
   notes?: string;          // free text injected into every worker prompt
+  resources: string[];     // shared devices workers take turns on (task lease), e.g. ios-sim, android-emu
+  lease_max_minutes: number; // a resource lease held longer than this is logged as overdue (not released)
 }
 
 export interface Defaults {
@@ -45,6 +47,7 @@ export interface Defaults {
   deny: string[];
   worktrees: string;
   run_retention_days: number;
+  lease_max_minutes: number;
 }
 
 export interface ForemanConfig {
@@ -89,6 +92,7 @@ const DEFAULTS: Defaults = {
   deny: [],
   worktrees: "~/git/.worktrees",
   run_retention_days: 30,
+  lease_max_minutes: 45,
 };
 
 export function expandHome(p: string): string {
@@ -118,6 +122,7 @@ heartbeat_sec = 30
 lease_sec = 150
 worktrees = "~/git/.worktrees"
 run_retention_days = 30
+lease_max_minutes = 45   # resource lease (task lease) held longer than this is flagged overdue
 # Extra tool patterns denied for every project, on top of the built-in list
 # (push, merge, deploy, destructive git, sudo).
 deny = []
@@ -140,6 +145,8 @@ deny = []
 # tickets = "linear"
 # ticket_team = "DIC"    # team key used when workers create tickets
 # ticket_states = { start = "In Progress", review = "In Review", done = "Done" }  # optional transitions
+# resources = ["ios-sim", "android-emu"]   # devices workers take turns on (task lease)
+# lease_max_minutes = 45
 # notes = "Three.js app; run with bun dev on port 5173."
 `;
 }
@@ -176,6 +183,8 @@ export function loadConfig(): ForemanConfig {
       ticket_team: p.ticket_team ? String(p.ticket_team) : undefined,
       ticket_states: typeof p.ticket_states === "object" && p.ticket_states ? p.ticket_states : {},
       notes: p.notes ? String(p.notes) : undefined,
+      resources: Array.isArray(p.resources) ? p.resources.map(String) : [],
+      lease_max_minutes: Number(p.lease_max_minutes ?? defaults.lease_max_minutes),
     };
   }
   const tickets = { linear: raw.tickets?.linear ? { api_key: raw.tickets.linear.api_key ? String(raw.tickets.linear.api_key) : undefined } : undefined };
@@ -184,4 +193,10 @@ export function loadConfig(): ForemanConfig {
 
 export function denyListFor(cfg: ForemanConfig, project: ProjectConfig): string[] {
   return Array.from(new Set([...GLOBAL_DENY, ...cfg.defaults.deny, ...project.deny]));
+}
+
+// Devices a project's workers take turns on: declared resources, plus the
+// implicit browser of a verify = "browser" project.
+export function deviceResources(p: ProjectConfig): string[] {
+  return Array.from(new Set([...p.resources, ...(p.verify === "browser" ? ["browser"] : [])]));
 }
