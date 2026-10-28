@@ -21,7 +21,9 @@ export interface ProjectConfig {
   speckit: boolean;
   deny: string[];          // extra disallowed tool patterns for this project
   concurrency: number;     // max concurrent running steps in this project
-  merge: "pr" | "direct";  // pr: push branch, open PR, gate, squash merge; direct: squash onto base and push, no PR or gate
+  merge: "pr" | "direct";  // pr: push branch, open PR, gate, squash merge; direct: merge onto base and push without a PR
+  merge_gate: boolean;     // direct mode only: wait for `task approve` before merging (pr mode always gates)
+  squash: boolean;         // direct mode: squash into one commit (default) or merge --no-ff keeping the branch's commits
   machine?: string;        // herdr saved machine label (slice 5)
   tickets?: string;        // ticket provider: linear (more later)
   ticket_team?: string;    // provider team key for creating tickets, e.g. TAC
@@ -130,7 +132,9 @@ deny = []
 # base_branch = "main"
 # verify = "browser"     # tests | browser | inspect
 # speckit = true
-# merge = "pr"           # pr (default): PR + merge gate; direct: squash onto base and push, no PR
+# merge = "pr"           # pr (default): PR + merge gate; direct: merge onto base and push, no PR
+# merge_gate = true      # direct mode: still wait for your approval before merging (default false)
+# squash = true          # direct mode: one squash commit (default) or false for merge --no-ff
 # concurrency = 2
 # deny = ["Bash(supabase *)"]
 # tickets = "linear"
@@ -165,6 +169,8 @@ export function loadConfig(): ForemanConfig {
       deny: Array.isArray(p.deny) ? p.deny.map(String) : [],
       concurrency: Number(p.concurrency ?? defaults.concurrency),
       merge: p.merge === "direct" ? "direct" : "pr",
+      merge_gate: p.merge === "direct" ? Boolean(p.merge_gate ?? false) : true,
+      squash: Boolean(p.squash ?? true),
       machine: p.machine ? String(p.machine) : undefined,
       tickets: p.tickets ? String(p.tickets) : undefined,
       ticket_team: p.ticket_team ? String(p.ticket_team) : undefined,

@@ -78,11 +78,17 @@ does the same from your shell. Only taskd holds the API key.
 
 ### Merge modes
 
-`merge = "pr"` (default): the pipeline pushes the branch, opens a PR, waits for
-`task approve`, then squash-merges. `merge = "direct"`: after QA passes the
-scheduler rebases, squashes into one commit citing the task and ticket, pushes
-to the base branch, fast-forwards your main checkout, and removes the worktree
-and branch. No PR body step and no merge gate.
+`merge = "pr"` (default): the pipeline pushes the branch, opens a PR from
+`handoff.md`, waits for `task approve`, then squash-merges. `merge = "direct"`:
+after QA passes the scheduler rebases and merges onto the base branch (one
+squash commit, or `merge --no-ff` with `squash = false`), pushes, fast-forwards
+your main checkout, and removes the worktree and branch. Add `merge_gate = true`
+to wait for your approval first. The handoff step (plain-language summary and
+verify steps, posted to the ticket) runs whenever there is a gate or a ticket.
+
+Worktrees share the main checkout's Claude Code auto-memory
+(`~/.claude/projects/<key>/memory` is symlinked), so workers read and extend
+the project's accumulated knowledge.
 
 ### Running taskd as a service
 

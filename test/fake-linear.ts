@@ -5,7 +5,7 @@ import { appendFileSync } from "node:fs";
 
 const port = Number(process.env.FAKE_LINEAR_PORT ?? 7779);
 const logFile = process.env.FAKE_LINEAR_LOG ?? "/dev/null";
-const team = { id: "team-1", key: "TST", states: [{ id: "s1", name: "Todo" }, { id: "s2", name: "In Progress" }, { id: "s3", name: "Done" }] };
+const team = { id: "team-1", key: "TST", states: [{ id: "s1", name: "Todo" }, { id: "s2", name: "In Progress" }, { id: "s3", name: "In Review" }, { id: "s4", name: "Done" }] };
 const issues: Record<string, any> = {
   "TST-1": { id: "issue-1", identifier: "TST-1", title: "Ticketed widget", description: "Build the widget described here.", url: "https://linear.invalid/TST-1", state: team.states[0], team: { id: team.id } },
 };

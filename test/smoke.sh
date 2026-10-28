@@ -35,7 +35,14 @@ speckit = false
 merge = "direct"
 tickets = "linear"
 ticket_team = "TST"
-ticket_states = { start = "In Progress", done = "Done" }
+ticket_states = { start = "In Progress", review = "In Review", done = "Done" }
+[projects.gated]
+path = "$T/repos/gated"
+verify = "inspect"
+speckit = false
+merge = "direct"
+merge_gate = true
+squash = false
 CFG
 echo done > "$T/mode"
 mk_repo() { # name speckit
@@ -44,7 +51,7 @@ mk_repo() { # name speckit
   git -C "$r" add -A; git -C "$r" -c user.email=f@x -c user.name=f commit -qm init
   git init -q --bare "$T/repos/$1.git"; git -C "$r" remote add origin "$T/repos/$1.git"; git -C "$r" push -q -u origin main 2>/dev/null
 }
-mk_repo lite 0; mk_repo kit 1; mk_repo direct 0
+mk_repo lite 0; mk_repo kit 1; mk_repo direct 0; mk_repo gated 0
 FAKE_LINEAR_PORT=7779 FAKE_LINEAR_LOG="$T/linear.log" bun "$ROOT/test/fake-linear.ts" >> "$T/linear-server.log" 2>&1 & LPID=$!
 start_taskd() { FOREMAN_HOME="$T" FOREMAN_CLAUDE_BIN="$ROOT/test/fake-claude.sh" FOREMAN_GH_BIN="$ROOT/test/fake-gh.sh" FOREMAN_LINEAR_URL=http://127.0.0.1:7779 "$ROOT/bin/foreman" taskd >> "$T/taskd.log" 2>&1 & PID=$!; }
 start_taskd
@@ -95,6 +102,14 @@ git -C "$T/repos/direct" log -1 --format=%B origin/main | grep -q "Foreman T0008
 [ "$(git -C "$T/repos/direct" rev-parse main)" = "$(git -C "$T/repos/direct" rev-parse origin/main)" ] && echo "  main checkout fast-forwarded" || { echo "  main checkout not updated"; exit 1; }
 [ ! -d "$(field T0008 worktree)" ] && echo "  worktree removed" || { echo "  worktree still present"; exit 1; }
 git -C "$T/repos/direct" branch --list "fm/*" | grep -q . && { echo "  feature branch not deleted"; exit 1; } || echo "  feature branch deleted"
-grep -q "transition TST-1: Done" "$T/linear.log" && grep -q "comment TST-1: Found a thing" "$T/linear.log" && grep -q "create TST-2: Follow-up bug (parent TST-1)" "$T/linear.log" && echo "  linear log: start, comment, create, done" || { echo "  linear log incomplete:"; cat "$T/linear.log"; exit 1; }
+grep -q "transition TST-1: In Review" "$T/linear.log" && grep -q "transition TST-1: Done" "$T/linear.log" && grep -q "comment TST-1: Found a thing" "$T/linear.log" && grep -q "create TST-2: Follow-up bug (parent TST-1)" "$T/linear.log" && grep -q "Ready to verify" "$T/linear.log" && echo "  linear log: start, comment, create, handoff review, done" || { echo "  linear log incomplete:"; cat "$T/linear.log"; exit 1; }
+echo "implement (direct, gated, no-ff): handoff, merge gate, merge --no-ff"
+"$ROOT/bin/task" create --project gated --kind implement --title "Gated thing" --brief x >/dev/null
+wait_for T0009 gate; "$ROOT/bin/task" approve T0009 >/dev/null; wait_for T0009 gate
+[ "$(field T0009 current_step)" = merge_approved ] && echo "  waiting at merge gate" || { echo "  unexpected gate $(field T0009 current_step)"; exit 1; }
+"$ROOT/bin/task" approve T0009 >/dev/null; wait_for T0009 done
+git -C "$T/repos/gated" fetch -q origin
+[ "$(git -C "$T/repos/gated" rev-list --merges --count origin/main)" = 1 ] && echo "  one merge commit on main (no-ff)" || { echo "  expected a merge commit"; exit 1; }
+git -C "$T/repos/gated" log -1 --format=%B origin/main | grep -q "The widget now exists" && echo "  merge message from handoff.md" || { echo "  merge message wrong"; exit 1; }
 "$ROOT/bin/task" ls --all
 echo "smoke test passed"

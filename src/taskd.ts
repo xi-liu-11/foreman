@@ -55,7 +55,7 @@ async function fetchTicket(proj: ProjectConfig, ref: string, maxAgeMs = 60_000):
 }
 
 // Comment on the task's ticket and optionally move it to a configured state.
-async function ticketHook(task: TaskRow, stage: "start" | "review" | "done" | "failed", body: string): Promise<void> {
+async function ticketHook(task: TaskRow, stage: "start" | "review" | "done" | "failed" | "note", body: string): Promise<void> {
   if (!task.ticket) return;
   const proj = project(task);
   let provider; try { provider = providerFor(cfg, proj); } catch (e: any) { store.event("ticket.error", { stage, error: e.message }, task.id); return; }
@@ -63,7 +63,7 @@ async function ticketHook(task: TaskRow, stage: "start" | "review" | "done" | "f
   try {
     await provider.comment(task.ticket, body);
     store.event("ticket.comment", { ref: task.ticket, body }, task.id);
-    const state = stage === "failed" ? undefined : proj.ticket_states[stage];
+    const state = stage === "failed" || stage === "note" ? undefined : proj.ticket_states[stage];
     if (state) {
       const name = await provider.transition(task.ticket, state);
       store.event("ticket.transition", { ref: task.ticket, state: name }, task.id);
@@ -212,28 +212,33 @@ async function runSystem(task: TaskRow, ps: Extract<PipelineStep, { type: "syste
   try {
     if (!task.worktree || !task.branch) throw new Error("task has no worktree");
     let summary: string;
+    const handoffFile = task.feature_dir ? join(task.worktree, task.feature_dir, "handoff.md") : null;
+    const handoff = handoffFile && existsSync(handoffFile) ? readFileSync(handoffFile, "utf8") : "";
+    // "## Summary" section of the handoff, for ticket comments and commit messages.
+    const handoffSummary = handoff.match(/## Summary\s*\n([\s\S]*?)(?=\n## |$)/)?.[1]?.trim() ?? "";
     if (ps.action === "open_pr") {
-      const bodyFile = task.feature_dir ? join(task.worktree, task.feature_dir, "pr.md") : null;
-      const url = await git.pushAndOpenPr(proj, task.worktree, task.branch, task.title, bodyFile);
+      const url = await git.pushAndOpenPr(proj, task.worktree, task.branch, task.title, handoffFile);
       store.updateTask(task.id, { pr_url: url });
       summary = `PR opened: ${url}`;
       await herdr.notify(`${task.id} PR opened`, url, "done");
-      await ticketHook(task, "review", `Foreman ${task.id}: PR opened ${url}`);
+      // The handoff step already posted the plain-language update; this is the administrative line.
+      await ticketHook(task, "note", `PR opened for review: ${url} (Foreman ${task.id})`);
     } else if (ps.action === "merge_direct") {
       const impl = [...store.stepsForTask(task.id)].reverse().find(s => s.name === "implement" && s.status === "done" && s.result);
       const implSummary = impl?.result ? JSON.parse(impl.result).summary ?? "" : "";
-      const message = `${task.title}\n\n${implSummary}\n\nForeman ${task.id}${task.ticket ? ` (${task.ticket})` : ""}, QA passed after ${task.qa_cycles + 1} cycle(s).`;
-      summary = await git.squashMergeDirect(proj, task.worktree, task.branch, message);
+      const body = handoff || implSummary;
+      const message = `${task.title}\n\n${body}\n\nForeman ${task.id}${task.ticket ? ` (${task.ticket})` : ""}, QA passed after ${task.qa_cycles + 1} cycle(s).`;
+      summary = await git.mergeDirect(proj, task.worktree, task.branch, message, proj.squash);
       await git.removeWorktree(proj, task.worktree);
       await git.deleteBranch(proj, task.branch);
       await herdr.notify(`${task.id} merged`, summary, "done");
-      await ticketHook(task, "done", `Foreman ${task.id}: ${summary}`);
+      await ticketHook(task, "done", `${handoffSummary || task.title}\n\nMerged to ${proj.base_branch} (Foreman ${task.id}).`);
     } else {
       if (!task.pr_url) throw new Error("no PR URL recorded; open_pr must run first");
       await git.mergePr(proj, task.worktree, task.pr_url);
       await git.removeWorktree(proj, task.worktree);
       summary = `Merged ${task.pr_url} and removed worktree`;
-      await ticketHook(task, "done", `Foreman ${task.id}: merged ${task.pr_url}`);
+      await ticketHook(task, "done", `${handoffSummary || task.title}\n\nMerged ${task.pr_url} (Foreman ${task.id}).`);
     }
     tx(() => {
       store.updateStep(step.id, { status: "done", finished_at: now(), result: JSON.stringify({ status: "done", summary, verdict: "n/a", artifacts: [], notes_for_next: "" }) });
@@ -439,6 +444,9 @@ async function stepContext(step: StepRow) {
     SLUG: slugify(task.title), FEATURE: (task.feature_dir ?? "").replace(/^specs\//, ""), BASE_BRANCH: proj.base_branch,
     QA_CYCLE: String(task.qa_cycles + 1), QA_FEEDBACK: qaFeedback,
     TICKET: ticket, TICKET_REF: task.ticket ?? "",
+    TICKET_HANDOFF: task.ticket
+      ? `\nThen post the Summary and To verify sections as a comment on ticket ${task.ticket} with \`task ticket comment "<text>"\` (one quoted argument, markdown allowed)${proj.ticket_states.review ? ` and move it with \`task ticket transition "${proj.ticket_states.review}"\`` : ""}. The ticket's readers are not developers; write for them.`
+      : "",
   };
   return { step, task, project: proj, defaults: cfg.defaults, deny: denyListFor(cfg, proj), prompt_vars, step_prompt };
 }
@@ -478,13 +486,14 @@ async function route(req: Request): Promise<Response> {
       } catch (e: any) { return bad(`could not read ticket ${ticket}: ${e.message}`); }
     }
     if (!title || !brief) return bad("title and brief are required");
-    let pipeline; try { pipeline = pipelineFor(kind, proj.speckit, proj.merge); } catch (e: any) { return bad(e.message); }
+    let pipeline; try { pipeline = pipelineFor(kind, proj.speckit, { merge: proj.merge, merge_gate: proj.merge_gate, tickets: Boolean(proj.tickets) }); } catch (e: any) { return bad(e.message); }
     const id = store.nextTaskId();
     let wt: git.WorktreeInfo | null = null;
     if (pipeline.needs_worktree) {
       try {
         const featureNumber = proj.speckit ? store.nextFeatureNumber(projName, await git.highestFeatureNumber(proj.path)) : null;
         wt = await git.setupWorktree(cfg, proj, id, title, featureNumber);
+        git.linkClaudeMemory(proj.path, wt.worktree);
       } catch (e: any) { return bad(`could not prepare worktree: ${e.message}`); }
     }
     const task = tx(() => {

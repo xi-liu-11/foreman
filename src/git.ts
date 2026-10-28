@@ -1,8 +1,9 @@
 // Git, worktree, Spec Kit feature, and PR operations performed by the scheduler.
 // Workers never push, open PRs, or merge; the deny list stops them and these
 // helpers do it after the human gates instead.
-import { join, basename } from "node:path";
-import { existsSync, mkdirSync, copyFileSync, writeFileSync, readdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { basename, dirname, join } from "node:path";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { expandHome, type ProjectConfig, type ForemanConfig } from "./config";
 
 export interface ExecResult { code: number; out: string; err: string }
@@ -96,11 +97,11 @@ export async function pushAndOpenPr(proj: ProjectConfig, worktree: string, branc
   return url;
 }
 
-// Direct mode: rebase the branch on the base, squash it into one commit, push
-// it to the base branch, fast-forward the main checkout if it is on the base.
-// Everything happens in the worktree, so the user's main checkout is never
-// left mid-merge.
-export async function squashMergeDirect(proj: ProjectConfig, worktree: string, branch: string, message: string): Promise<string> {
+// Direct mode: rebase the branch on the base, then either squash it into one
+// commit or merge it with --no-ff (in a temporary detached worktree), push the
+// result to the base branch, and fast-forward the main checkout if it is on the
+// base. The user's main checkout is never left mid-merge.
+export async function mergeDirect(proj: ProjectConfig, worktree: string, branch: string, message: string, squash: boolean): Promise<string> {
   if (!(await isClean(worktree))) throw new Error("worktree has uncommitted changes; the last step must commit everything");
   const hasOrigin = (await exec([gitBin(), "remote", "get-url", "origin"], worktree)).code === 0;
   const baseRef = hasOrigin ? `origin/${proj.base_branch}` : proj.base_branch;
@@ -109,11 +110,24 @@ export async function squashMergeDirect(proj: ProjectConfig, worktree: string, b
   if (rebase.code !== 0) { await exec([gitBin(), "rebase", "--abort"], worktree); throw new Error(`rebase onto ${baseRef} has conflicts; resolve in ${worktree} and run task retry`); }
   const changed = (await must([gitBin(), "rev-list", "--count", `${baseRef}..HEAD`], worktree, "git rev-list")).trim();
   if (changed === "0") throw new Error(`branch ${branch} has no commits beyond ${baseRef}`);
-  await must([gitBin(), "reset", "--quiet", "--soft", baseRef], worktree, "git reset --soft");
-  await must([gitBin(), "-c", "user.useConfigOnly=false", "commit", "--quiet", "-m", message], worktree, "git commit");
-  const sha = (await must([gitBin(), "rev-parse", "HEAD"], worktree, "git rev-parse")).trim();
+  let sha: string;
+  let how: string;
+  if (squash) {
+    await must([gitBin(), "reset", "--quiet", "--soft", baseRef], worktree, "git reset --soft");
+    await must([gitBin(), "commit", "--quiet", "-m", message], worktree, "git commit");
+    sha = (await must([gitBin(), "rev-parse", "HEAD"], worktree, "git rev-parse")).trim();
+    how = "squashed onto";
+  } else {
+    const tmp = join(dirname(worktree), `_merge-${proj.name}-${Date.now()}`);
+    await must([gitBin(), "worktree", "add", "--quiet", "--detach", tmp, baseRef], proj.path, "git worktree add (merge)");
+    try {
+      await must([gitBin(), "merge", "--no-ff", "--quiet", "-m", message, branch], tmp, "git merge --no-ff");
+      sha = (await must([gitBin(), "rev-parse", "HEAD"], tmp, "git rev-parse")).trim();
+    } finally { await exec([gitBin(), "worktree", "remove", "--force", tmp], proj.path); }
+    how = "merged (no-ff) into";
+  }
   if (hasOrigin) {
-    await must([gitBin(), "push", "--quiet", "origin", `HEAD:refs/heads/${proj.base_branch}`], worktree, "git push");
+    await must([gitBin(), "push", "--quiet", "origin", `${sha}:refs/heads/${proj.base_branch}`], worktree, "git push");
     await exec([gitBin(), "fetch", "--quiet", "origin"], proj.path);
   }
   // Keep the main checkout current when it is sitting on the base branch.
@@ -125,7 +139,24 @@ export async function squashMergeDirect(proj: ProjectConfig, worktree: string, b
   } else if (!hasOrigin) {
     await must([gitBin(), "update-ref", `refs/heads/${proj.base_branch}`, sha], proj.path, "git update-ref");
   }
-  return `${sha.slice(0, 7)} squashed onto ${proj.base_branch}${hasOrigin ? " and pushed" : ""}${note}`;
+  return `${sha.slice(0, 7)} ${how} ${proj.base_branch}${hasOrigin ? " and pushed" : ""}${note}`;
+}
+
+// Claude Code keys its auto-memory by working directory, so a worktree would
+// start with empty memory. Point the worktree's memory directory at the main
+// checkout's so workers read (and add to) the project's accumulated knowledge.
+export function linkClaudeMemory(mainPath: string, worktree: string): string | null {
+  const projects = join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"), "projects");
+  const key = (p: string) => p.replace(/[^A-Za-z0-9]/g, "-");
+  const mainMem = join(projects, key(mainPath), "memory");
+  const wtDir = join(projects, key(worktree));
+  const wtMem = join(wtDir, "memory");
+  try {
+    mkdirSync(mainMem, { recursive: true });
+    mkdirSync(wtDir, { recursive: true });
+    if (!existsSync(wtMem)) symlinkSync(mainMem, wtMem);
+    return wtMem;
+  } catch { return null; }
 }
 
 export async function deleteBranch(proj: ProjectConfig, branch: string): Promise<void> {

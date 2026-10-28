@@ -22,16 +22,29 @@ const QA: PipelineStep = {
     { name: "test", role: "test-analyst", prompt: "test" },
   ],
 };
+// The handoff step writes specs/<feature>/handoff.md (PR body or merge message,
+// plain-language summary and verify steps) and updates the linked ticket.
+const HANDOFF: PipelineStep = { type: "agent", name: "handoff", role: "developer", prompt: "handoff" };
 const QA_AND_PR: PipelineStep[] = [
   QA,
-  { type: "agent", name: "pr", role: "developer", prompt: "pr" },
+  HANDOFF,
   { type: "system", name: "open_pr", action: "open_pr" },
   { type: "gate", name: "merge_approved", label: "Approve merge" },
   { type: "system", name: "merge", action: "merge" },
 ];
-// Direct-merge projects: after QA the scheduler squashes the branch onto the
-// base branch and pushes. No PR body step, no merge gate.
-const QA_AND_MERGE: PipelineStep[] = [QA, { type: "system", name: "merge", action: "merge_direct" }];
+
+export interface MergeOptions { merge: "pr" | "direct"; merge_gate: boolean; tickets: boolean }
+
+// Direct-merge projects skip the PR. The handoff step stays whenever someone
+// reads it before the merge (a gate) or a ticket needs the plain-language update.
+function tailFor(o: MergeOptions): PipelineStep[] {
+  if (o.merge === "pr") return QA_AND_PR;
+  const steps: PipelineStep[] = [QA];
+  if (o.merge_gate || o.tickets) steps.push(HANDOFF);
+  if (o.merge_gate) steps.push({ type: "gate", name: "merge_approved", label: "Approve merge to base branch" });
+  steps.push({ type: "system", name: "merge", action: "merge_direct" });
+  return steps;
+}
 
 export const PIPELINES: Record<string, Pipeline> = {
   research: {
@@ -80,11 +93,11 @@ export const PIPELINES: Record<string, Pipeline> = {
 
 // `implement` resolves to the Spec Kit or lite variant depending on the project,
 // and its tail to PR or direct merge depending on the project's merge mode.
-export function pipelineFor(kind: string, speckit = true, merge: "pr" | "direct" = "pr"): Pipeline {
+export function pipelineFor(kind: string, speckit = true, opts: MergeOptions = { merge: "pr", merge_gate: true, tickets: false }): Pipeline {
   if (kind === "implement" && !speckit) kind = "implement_lite";
   const p = PIPELINES[kind];
   if (!p) throw new Error(`Unknown task kind '${kind}'. Known: ${Object.keys(PIPELINES).filter(k => k !== "implement_lite").join(", ")}`);
-  if (merge !== "direct" || !p.needs_worktree) return p;
+  if (!p.needs_worktree) return p;
   const i = p.steps.indexOf(QA);
-  return { ...p, steps: [...p.steps.slice(0, i), ...QA_AND_MERGE] };
+  return { ...p, steps: [...p.steps.slice(0, i), ...tailFor(opts)] };
 }

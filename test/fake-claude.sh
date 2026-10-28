@@ -20,8 +20,9 @@ case "${FOREMAN_STEP_NAME:-}" in
     echo "step $FOREMAN_STEP_NAME ran" >> work.log; git add -A >/dev/null 2>&1; git -c user.email=f@x -c user.name=foreman commit -qm "fake $FOREMAN_STEP_NAME" >/dev/null 2>&1
     [ "$FOREMAN_STEP_NAME" = plan_qa ] && verdict=pass
     mode=done ;;
-  pr)
-    fd=$(ls -d specs/*/ 2>/dev/null | head -1); mkdir -p "$fd"; echo "# PR body" > "$fd/pr.md"; git add -A >/dev/null 2>&1; git -c user.email=f@x -c user.name=foreman commit -qm "fake pr body" >/dev/null 2>&1
+  handoff)
+    fd=$(ls -d specs/*/ 2>/dev/null | head -1); mkdir -p "$fd"; printf '## Summary\nThe widget now exists.\n\n## To verify\n1. Open the app.\n' > "$fd/handoff.md"; git add -A >/dev/null 2>&1; git -c user.email=f@x -c user.name=foreman commit -qm "fake handoff" >/dev/null 2>&1
+    [ -n "$FOREMAN_TASK" ] && task ticket comment "Ready to verify: the widget now exists." >/dev/null 2>&1; task ticket transition "In Review" >/dev/null 2>&1
     mode=done ;;
 esac
 case $mode in
