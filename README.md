@@ -145,7 +145,8 @@ then fails the task and notifies you. Every transition is an event row.
 4. ~~Linear ticket adapter (`task ticket ...`, scheduler hooks), direct merge mode, launchd service~~; assistant skill polish
 5. Remote machines via `herdr --machine`
 6. Retro loop over transcripts
-7. TUI or web dashboard over the HTTP API
+7. ~~Web dashboard over the HTTP API~~ (`foreman dashboard`)
+8. Merge conflicts: when the rebase in `merge_direct` conflicts, insert a developer `resolve` step (rebase, resolve, run the suite) and retry the merge, instead of failing the task (seen on T0004 after 026 landed first)
 
 ## Testing
 
