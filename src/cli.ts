@@ -77,7 +77,9 @@ const FOREMAN_HELP = `foreman — scheduler and worker runner
   foreman health           check taskd
   foreman service install|uninstall|restart|stop|status
                            run taskd under launchd so it survives terminals and reboots
-  foreman assistant        open a Claude Code session that acts as your Foreman assistant`;
+  foreman assistant        open a Claude Code session that acts as your Foreman assistant
+  foreman dashboard        open the live dashboard in your browser (served by taskd)
+  foreman watch            live terminal view of the queue (refreshes every 2s)`;
 
 async function taskMain(): Promise<void> {
   const [cmd, ...rest] = positional();
@@ -258,6 +260,38 @@ async function foremanMain(): Promise<void> {
     case "init": ensureHome(); console.log(CONFIG_PATH); return;
     case "config": console.log(JSON.stringify(loadConfig(), null, 2)); return;
     case "health": { const c = TaskdClient.fromEnvOrConfig(); console.log(JSON.stringify(await c.get("/health"))); return; }
+    case "dashboard": {
+      const cfg = loadConfig();
+      const url = `http://${cfg.server.bind === "0.0.0.0" ? "127.0.0.1" : cfg.server.bind}:${cfg.server.port}/dashboard?token=${cfg.server.token}`;
+      console.log(url);
+      if (!flag("print")) Bun.spawn(["open", url]).unref();
+      return;
+    }
+    case "watch": {
+      const c = TaskdClient.fromEnvOrConfig();
+      for (;;) {
+        let body: string;
+        try {
+          const all: any[] = await c.get("/tasks?all=1");
+          const active = all.filter(t => ["queued", "running", "blocked", "gate"].includes(t.status));
+          const lines: string[] = [`Foreman  ${new Date().toLocaleTimeString()}  ${active.length} active`, ""];
+          for (const t of active) {
+            const d = await c.get(`/tasks/${t.id}`);
+            const running = d.steps.filter((s: any) => s.status === "running").map((s: any) => `${s.name} ${ago(s.started_at)}`).join(", ");
+            lines.push(`${t.id} ${pad(t.status, 8)} ${pad(t.project, 14)} ${pad(t.current_step ?? "", 14)} $${t.cost_usd.toFixed(2)}  ${t.title}${running ? `  [${running}]` : ""}`);
+            for (const b of d.blocks) lines.push(`      ? [${b.id}] ${b.question.split("\n")[0]}`);
+            if (t.status === "gate") lines.push(`      ! waiting for approval at ${t.current_step}`);
+            const notes = d.events.filter((e: any) => e.type === "note").slice(-2);
+            for (const e of notes) lines.push(`      ${e.ts.slice(11, 16)} ${JSON.parse(e.data).text.split("\n")[0].slice(0, 110)}`);
+          }
+          const recent = all.filter(t => !active.includes(t)).slice(0, 6);
+          if (recent.length) { lines.push("", "recent:"); for (const t of recent) lines.push(`${t.id} ${pad(t.status, 9)} ${pad(t.project, 14)} $${t.cost_usd.toFixed(2)}  ${t.title}`); }
+          body = lines.join("\n");
+        } catch (e: any) { body = `taskd unreachable: ${e.message}`; }
+        process.stdout.write("\x1b[2J\x1b[H" + body + "\n");
+        await Bun.sleep(2000);
+      }
+    }
     case "service": { const { serviceCommand } = await import("./service"); await serviceCommand(rest[0]); return; }
     case "assistant": {
       // The assistant is an ordinary interactive Claude Code session with the

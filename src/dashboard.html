@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Foreman</title>
+<style>
+  :root { --bg:#fafaf8; --fg:#1b1b1b; --mute:#6b6b6b; --line:#e3e1dc; --card:#fff; --accent:#2f6fed; --warn:#b8860b; --bad:#c0392b; --ok:#2e8b57; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#141413; --fg:#ececea; --mute:#9a9a96; --line:#2c2c2a; --card:#1d1d1c; --accent:#7aa2ff; --warn:#e2b53f; --bad:#ff6b5b; --ok:#5fc48b; } }
+  * { box-sizing:border-box }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.45 ui-sans-serif,system-ui,sans-serif; padding:16px; }
+  h1 { font-size:18px; margin:0 0 4px; display:flex; gap:12px; align-items:baseline }
+  h1 small { color:var(--mute); font-weight:normal; font-size:12px }
+  section { margin-top:18px }
+  h2 { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--mute); margin:0 0 8px }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:12px 14px; margin-bottom:10px }
+  .row { display:flex; gap:10px; align-items:baseline; flex-wrap:wrap }
+  .id { font-family:ui-monospace,monospace; color:var(--mute) }
+  .title { font-weight:600 }
+  .badge { font-size:11px; padding:1px 7px; border-radius:10px; border:1px solid var(--line); color:var(--mute) }
+  .badge.running { border-color:var(--accent); color:var(--accent) }
+  .badge.blocked, .badge.gate { border-color:var(--warn); color:var(--warn) }
+  .badge.failed { border-color:var(--bad); color:var(--bad) }
+  .badge.done { border-color:var(--ok); color:var(--ok) }
+  .meta { color:var(--mute); font-size:12px }
+  .steps { display:flex; gap:4px; flex-wrap:wrap; margin:8px 0 }
+  .step { font-size:11px; padding:2px 8px; border-radius:4px; border:1px solid var(--line); color:var(--mute) }
+  .step.done { color:var(--ok); border-color:var(--ok) }
+  .step.running { color:var(--accent); border-color:var(--accent) }
+  .step.failed, .step.fail { color:var(--bad); border-color:var(--bad) }
+  .step.gate, .step.blocked { color:var(--warn); border-color:var(--warn) }
+  .note { font-size:13px; margin:4px 0 0; white-space:pre-wrap }
+  .note time { color:var(--mute); font-family:ui-monospace,monospace; font-size:11px; margin-right:8px }
+  .ask { border-left:3px solid var(--warn); padding-left:10px; margin:8px 0 }
+  .empty { color:var(--mute) }
+  table { border-collapse:collapse; width:100% }
+  td, th { text-align:left; padding:4px 8px 4px 0; border-bottom:1px solid var(--line); font-size:13px; vertical-align:top }
+  th { color:var(--mute); font-weight:normal; font-size:11px; text-transform:uppercase }
+  .err { color:var(--bad) }
+</style>
+</head>
+<body>
+<h1>Foreman <small id="status">connecting…</small></h1>
+<section><h2>Needs you</h2><div id="inbox" class="empty">nothing</div></section>
+<section><h2>Active</h2><div id="active" class="empty">no active tasks</div></section>
+<section><h2>Recent</h2><div id="recent"></div></section>
+<script>
+const qs = new URLSearchParams(location.search);
+if (qs.get("token")) { try { localStorage.setItem("foreman_token", qs.get("token")); } catch {} history.replaceState(null, "", location.pathname); }
+let token = ""; try { token = localStorage.getItem("foreman_token") || ""; } catch {}
+const api = p => fetch(p, { headers: { authorization: "Bearer " + token } }).then(r => { if (!r.ok) throw new Error(r.status + " " + p); return r.json(); });
+const esc = s => String(s ?? "").replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+const ago = iso => { if (!iso) return ""; const s = Math.max(0, (Date.now() - Date.parse(iso)) / 1000); return s < 60 ? Math.round(s) + "s" : s < 3600 ? Math.round(s / 60) + "m" : s < 86400 ? Math.round(s / 3600) + "h" : Math.round(s / 86400) + "d"; };
+const dur = (a, b) => { if (!a) return ""; const s = ((b ? Date.parse(b) : Date.now()) - Date.parse(a)) / 1000; return s < 60 ? Math.round(s) + "s" : Math.round(s / 60) + "m"; };
+const money = n => "$" + Number(n || 0).toFixed(2);
+
+function pipelineSteps(t, steps) {
+  const names = JSON.parse(t.pipeline).map(s => s.type === "parallel" ? s.children.map(c => c.name) : [s.name]).flat();
+  return names.map(n => {
+    const rows = steps.filter(s => s.name === n); const last = rows[rows.length - 1];
+    const r = last?.result ? JSON.parse(last.result) : null;
+    const cls = !last ? "" : last.status === "done" && r?.verdict === "fail" ? "fail" : last.status;
+    const extra = last ? (rows.length > 1 ? " ×" + rows.length : "") + (last.status === "running" ? " " + dur(last.started_at) : "") : "";
+    return `<span class="step ${cls}" title="${esc(last?.error || r?.summary || "")}">${n}${extra}</span>`;
+  }).join("");
+}
+
+function card(t, d) {
+  const steps = d?.steps ?? [];
+  const notes = (d?.events ?? []).filter(e => e.type === "note" || e.type === "task.qa_fail" || e.type === "step.failed" || e.type === "ticket.comment").slice(-4);
+  const cur = steps.filter(s => s.status === "running").map(s => `${s.name} for ${dur(s.started_at)}${s.turns ? "" : ""}`).join(", ");
+  return `<div class="card">
+    <div class="row"><span class="id">${t.id}</span><span class="title">${esc(t.title)}</span><span class="badge ${t.status}">${t.status}</span>
+      <span class="meta">${esc(t.project)} · ${t.kind} · ${money(t.cost_usd)} · ${ago(t.created_at)} ago${cur ? " · " + cur : ""}${t.branch ? " · " + esc(t.branch) : ""}${t.pr_url ? ` · <a href="${esc(t.pr_url)}">PR</a>` : ""}</span></div>
+    ${d ? `<div class="steps">${pipelineSteps(t, steps)}</div>` : ""}
+    ${(d?.blocks ?? []).map(b => `<div class="ask"><b>Question</b> (block ${b.id}): ${esc(b.question)}</div>`).join("")}
+    ${t.status === "gate" ? `<div class="ask"><b>Waiting for approval</b> at ${esc(t.current_step)}</div>` : ""}
+    ${t.status === "failed" && t.result ? `<div class="ask err">${esc(JSON.parse(t.result).error || "")}</div>` : ""}
+    ${notes.map(e => { const x = JSON.parse(e.data); const txt = e.type === "note" ? x.text : e.type === "task.qa_fail" ? `QA cycle ${x.cycle} failed: ${x.failed.join(", ")}` : e.type === "ticket.comment" ? `ticket ${x.ref}: ${x.body}` : `${x.step} failed: ${x.error}`; return `<p class="note"><time>${e.ts.slice(11, 16)}</time>${esc(txt)}</p>`; }).join("")}
+  </div>`;
+}
+
+async function refresh() {
+  try {
+    const all = await api("/tasks?all=1");
+    const active = all.filter(t => ["queued", "running", "blocked", "gate"].includes(t.status));
+    const details = Object.fromEntries(await Promise.all(active.map(async t => [t.id, await api("/tasks/" + t.id)])));
+    const needs = active.filter(t => t.status === "gate" || t.open_blocks > 0).concat(all.filter(t => t.status === "failed").slice(0, 5));
+    document.getElementById("inbox").outerHTML = `<div id="inbox" class="${needs.length ? "" : "empty"}">${needs.length ? needs.map(t => card(t, details[t.id])).join("") : "nothing"}</div>`;
+    const rest = active.filter(t => !needs.includes(t));
+    document.getElementById("active").outerHTML = `<div id="active" class="${rest.length ? "" : "empty"}">${rest.length ? rest.map(t => card(t, details[t.id])).join("") : "no active tasks"}</div>`;
+    const recent = all.filter(t => !active.includes(t) && !needs.includes(t)).slice(0, 15);
+    document.getElementById("recent").innerHTML = recent.length ? `<table><tr><th>id</th><th>status</th><th>project</th><th>kind</th><th>age</th><th>cost</th><th>title</th></tr>${recent.map(t => `<tr><td class="id">${t.id}</td><td><span class="badge ${t.status}">${t.status}</span></td><td>${esc(t.project)}</td><td>${t.kind}</td><td>${ago(t.created_at)}</td><td>${money(t.cost_usd)}</td><td>${esc(t.title)}</td></tr>`).join("")}</table>` : `<span class="empty">none</span>`;
+    const running = all.filter(t => t.status === "running").length;
+    document.getElementById("status").textContent = `${running} running · ${needs.length} need you · refreshed ${new Date().toLocaleTimeString()}`;
+  } catch (e) {
+    document.getElementById("status").innerHTML = `<span class="err">${esc(e.message)}${!token ? " — open this page via `foreman dashboard` so it gets the token" : ""}</span>`;
+  }
+}
+refresh(); setInterval(refresh, 3000);
+</script>
+</body>
+</html>

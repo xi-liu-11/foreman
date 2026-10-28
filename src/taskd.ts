@@ -460,6 +460,8 @@ async function route(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const p = url.pathname;
   if (p === "/health") return json({ ok: true, herdr: herdrOk, running: store.runningCount() });
+  // The dashboard page is static; it authenticates its own API calls with the token it was opened with.
+  if (p === "/dashboard" || p === "/") return new Response(Bun.file(join(REPO_ROOT, "src", "dashboard.html")), { headers: { "content-type": "text/html; charset=utf-8" } });
   if (req.headers.get("authorization") !== `Bearer ${cfg.server.token}`) return bad("unauthorized", 401);
   const body = req.method === "POST" ? await req.json().catch(() => ({})) : {};
   const m = (re: RegExp) => p.match(re);
