@@ -74,7 +74,8 @@ const FOREMAN_HELP = `foreman — scheduler and worker runner
   foreman config           print the loaded configuration
   foreman health           check taskd
   foreman service install|uninstall|restart|stop|status
-                           run taskd under launchd so it survives terminals and reboots`;
+                           run taskd under launchd so it survives terminals and reboots
+  foreman assistant        open a Claude Code session that acts as your Foreman assistant`;
 
 async function taskMain(): Promise<void> {
   const [cmd, ...rest] = positional();
@@ -256,6 +257,15 @@ async function foremanMain(): Promise<void> {
     case "config": console.log(JSON.stringify(loadConfig(), null, 2)); return;
     case "health": { const c = TaskdClient.fromEnvOrConfig(); console.log(JSON.stringify(await c.get("/health"))); return; }
     case "service": { const { serviceCommand } = await import("./service"); await serviceCommand(rest[0]); return; }
+    case "assistant": {
+      // The assistant is an ordinary interactive Claude Code session with the
+      // foreman skill as its system prompt. Run it in any herdr pane.
+      const { REPO_ROOT } = await import("./config");
+      const skill = join(REPO_ROOT, "skills", "foreman", "SKILL.md");
+      const body = readFileSync(skill, "utf8").replace(/^---[\s\S]*?---\n/, "");
+      const proc = Bun.spawn(["claude", "--append-system-prompt", body, ...rest], { stdio: ["inherit", "inherit", "inherit"] });
+      process.exit(await proc.exited);
+    }
     default: die(`unknown command '${cmd}'\n\n${FOREMAN_HELP}`);
   }
 }
