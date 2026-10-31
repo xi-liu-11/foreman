@@ -468,7 +468,7 @@ async function stepContext(step: StepRow) {
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json" } });
 const bad = (msg: string, status = 400) => json({ error: msg }, status);
 
-async function route(req: Request): Promise<Response> {
+export async function route(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const p = url.pathname;
   if (p === "/health") return json({ ok: true, herdr: herdrOk, running: store.runningCount() });
@@ -627,7 +627,9 @@ async function route(req: Request): Promise<Response> {
     }
   }
   if (p === "/blocks" && req.method === "GET") {
-    return json(store.openBlocks().map(b => ({ ...b, task: store.getTask(b.task_id) })));
+    const project = url.searchParams.get("project");
+    const blocks = store.openBlocks().map(b => ({ ...b, task: store.getTask(b.task_id) }));
+    return json(project ? blocks.filter(b => b.task?.project === project) : blocks);
   }
   if ((mm = m(/^\/blocks\/(\d+)\/answer$/)) && req.method === "POST") {
     const b = store.getBlock(Number(mm[1])); if (!b) return bad("no such block", 404);

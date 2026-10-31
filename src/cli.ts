@@ -48,7 +48,7 @@ User commands
   task show <id>
   task log <id> [step] [--attempt N] [--tail N]
                                   transcript of a step run (--json for raw events)
-  task inbox                      open questions and gates waiting on you
+  task inbox [--project <name>]   open questions and gates waiting on you
   task answer <block-id> "<answer>"
   task approve <id>               approve the gate the task is waiting at
   task retry <id> [--fresh]       retry a failed task (fresh = new session)
@@ -181,8 +181,11 @@ async function taskMain(): Promise<void> {
       return;
     }
     case "inbox": {
-      const blocks: any[] = await client.get("/blocks");
-      const gates: any[] = await client.get("/tasks?status=gate");
+      const project = opt("project");
+      if (flag("project") && !project) die("--project requires a name");
+      const scope = project ? `project=${encodeURIComponent(project)}` : "";
+      const blocks: any[] = await client.get(`/blocks${scope && `?${scope}`}`);
+      const gates: any[] = await client.get(`/tasks?status=gate${scope && `&${scope}`}`);
       out({ blocks, gates }, () => {
         const lines: string[] = [];
         if (blocks.length) { lines.push("questions:"); for (const b of blocks) lines.push(`  [${b.id}] ${b.task_id} (${b.task?.title}) ${ago(b.created_at)} ago\n      ${b.question.replace(/\n/g, "\n      ")}`); }

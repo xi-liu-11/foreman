@@ -57,6 +57,7 @@ task ls
 task show T0001
 task log T0001 [research] [--attempt N] [--tail N]   # what the worker did
 task inbox                 # questions and gates waiting on you
+task inbox --project foreman   # only that project's questions and gates
 task answer 3 "Use option B."
 task approve T0007
 task retry T0004 [--fresh]

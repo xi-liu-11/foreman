@@ -1,0 +1,182 @@
+== seed
+  T0001 -> gate
+  T0002 -> gate
+  T0003 -> blocked
+  T0004 -> blocked
+  T0005 -> blocked
+  T0005 -> done
+  T0006 -> running
+
+== route scenarios
+PASS  S5 precondition: T0006 in project a is running
+PASS  S5 GET /tasks?status=gate&project=a is only a's gated task, not its running one
+PASS  S1 GET /blocks?project=a is only a's block, with task embedded
+PASS  S2 GET /blocks returns both blocks
+PASS  S3 GET /blocks?project=none returns []
+PASS  S4 answered block on a is not returned
+PASS  S6 GET /tasks?status=gate returns both gated tasks
+  T0006 -> done
+
+== CLI scenarios
+PASS  S7 inbox --project a --json has a's block and gate only
+PASS  S7 same with the flags reversed
+PASS  S8 inbox --project a text names a's items and none of b's
+PASS  S9 inbox text lists both projects
+PASS  S9 inbox --json lists both projects
+PASS  S10 --project without a value exits 1 with the error, before any request
+PASS  S11 --help shows --project on the inbox line
+PASS  Behaviour table: unknown project reads as inbox empty, exit 0
+PASS  Behaviour table: unknown project --json is empty lists, exit 0
+
+== transcript
+$ task inbox --project a
+questions:
+  [1] T0003 (a blocked task) 19s ago
+      Which colour should the button be?
+gates:
+  T0001 a gated task — waiting at plan_approved: task approve T0001
+[exit 0]
+$ task inbox --project a --json
+{
+  "blocks": [
+    {
+      "id": 1,
+      "task_id": "T0003",
+      "step_id": 5,
+      "question": "Which colour should the button be?",
+      "answer": null,
+      "created_at": "2026-10-31T11:58:26.910Z",
+      "answered_at": null,
+      "task": {
+        "id": "T0003",
+        "project": "a",
+        "kind": "research",
+        "title": "a blocked task",
+        "brief": "x",
+        "status": "blocked",
+        "pipeline": "[{\"type\":\"agent\",\"name\":\"research\",\"role\":\"researcher\",\"prompt\":\"research\"}]",
+        "current_step": "research",
+        "priority": 5,
+        "branch": null,
+        "worktree": null,
+        "feature_dir": null,
+        "ticket": null,
+        "qa_cycles": 0,
+        "result": null,
+        "created_at": "2026-10-31T11:58:25.477Z",
+        "updated_at": "2026-10-31T11:58:26.921Z",
+        "pr_url": null
+      }
+    }
+  ],
+  "gates": [
+    {
+      "id": "T0001",
+      "project": "a",
+      "kind": "implement_lite",
+      "title": "a gated task",
+      "brief": "x",
+      "status": "gate",
+      "pipeline": "[{\"type\":\"agent\",\"name\":\"plan\",\"role\":\"architect\",\"prompt\":\"plan_lite\"},{\"type\":\"gate\",\"name\":\"plan_approved\",\"label\":\"Approve the plan\"},{\"type\":\"agent\",\"name\":\"implement\",\"role\":\"developer\",\"prompt\":\"implement_lite\"},{\"type\":\"parallel\",\"name\":\"qa\",\"on_fail\":\"implement\",\"max_cycles_key\":\"max_qa_cycles\",\"children\":[{\"name\":\"review\",\"role\":\"qa-reviewer\",\"prompt\":\"review\"},{\"name\":\"test\",\"role\":\"test-analyst\",\"prompt\":\"test\"}]},{\"type\":\"agent\",\"name\":\"handoff\",\"role\":\"developer\",\"prompt\":\"handoff\"},{\"type\":\"system\",\"name\":\"open_pr\",\"action\":\"open_pr\"},{\"type\":\"gate\",\"name\":\"merge_approved\",\"label\":\"Approve merge\"},{\"type\":\"system\",\"name\":\"merge\",\"action\":\"merge\"}]",
+      "current_step": "plan_approved",
+      "priority": 5,
+      "branch": "fm/t0001-gated-task",
+      "worktree": "/var/folders/7w/1mrvd9812138hkj9ndncqcvh0000gn/T/fm-t0022-e2e-niso9H/worktrees/a/fm-t0001-gated-task",
+      "feature_dir": "specs/t0001-gated-task",
+      "ticket": null,
+      "qa_cycles": 0,
+      "result": null,
+      "created_at": "2026-10-31T11:58:21.035Z",
+      "updated_at": "2026-10-31T11:58:22.484Z",
+      "pr_url": null,
+      "open_blocks": 0,
+      "cost_usd": 0.01
+    }
+  ]
+}
+[exit 0]
+$ task inbox --project b
+questions:
+  [2] T0004 (b blocked task) 18s ago
+      Which colour should the button be?
+gates:
+  T0002 b gated task — waiting at plan_approved: task approve T0002
+[exit 0]
+$ task inbox --project none
+inbox empty
+[exit 0]
+$ task inbox --project none --json
+{
+  "blocks": [],
+  "gates": []
+}
+[exit 0]
+$ task inbox --project
+error: --project requires a name
+[exit 1]
+$ task inbox --project 
+error: --project requires a name
+[exit 1]
+$ task inbox
+questions:
+  [1] T0003 (a blocked task) 19s ago
+      Which colour should the button be?
+  [2] T0004 (b blocked task) 18s ago
+      Which colour should the button be?
+gates:
+  T0001 a gated task — waiting at plan_approved: task approve T0001
+  T0002 b gated task — waiting at plan_approved: task approve T0002
+[exit 0]
+12:  task inbox [--project <name>]   open questions and gates waiting on you
+
+== argument edge probes (outside the numbered scenarios)
+$ task inbox --project=a
+questions:
+  [1] T0003 (a blocked task) 19s ago
+      Which colour should the button be?
+  [2] T0004 (b blocked task) 18s ago
+      Which colour should the button be?
+gates:
+  T0001 a gated task — waiting at plan_approved: task approve T0001
+  T0002 b gated task — waiting at plan_approved: task approve T0002
+[exit 0]
+$ task ls --project=a
+ID     STATUS    PROJECT        KIND           STEP           AGE   COST    Q  TITLE
+T0001  gate      a              implement_lite plan_approved  25s   $0.01      a gated task
+T0002  gate      b              implement_lite plan_approved  23s   $0.01      b gated task
+T0003  blocked   a              research       research       21s   $0.01   1  a blocked task
+T0004  blocked   b              research       research       19s   $0.01   1  b blocked task
+[exit 0]
+
+== no-flag output against the merge base
+PASS  byte-identical to baseline CLI on this daemon: textn
+PASS  byte-identical to baseline CLI + baseline daemon: textn
+PASS  byte-identical to baseline CLI on this daemon: json
+PASS  byte-identical to baseline CLI + baseline daemon: json
+PASS  byte-identical to baseline CLI on this daemon: blocks
+PASS  byte-identical to baseline CLI + baseline daemon: blocks
+PASS  byte-identical to baseline CLI on this daemon: gates
+PASS  byte-identical to baseline CLI + baseline daemon: gates
+
+== id commands still work (new CLI)
+PASS  show T0003
+$ task answer 2 Red.
+answered; worker resuming
+[exit 0]
+  T0004 -> done
+$ task approve T0002
+approved plan_approved
+[exit 0]
+$ task cancel T0001
+cancelled
+[exit 0]
+$ task retry T0003
+error: task is blocked, not failed
+[exit 1]
+PASS  same result as baseline for missing id: show T9999 (error: no such task exit 1 )
+PASS  same result as baseline for missing id: approve T9999 (error: no such task exit 1 )
+PASS  same result as baseline for missing id: answer 9999 x (error: no such block exit 1 )
+PASS  same result as baseline for missing id: retry T9999 (error: no such task exit 1 )
+PASS  same result as baseline for missing id: cancel T9999 (error: no such task exit 1 )
+
+== result: 0 failed
