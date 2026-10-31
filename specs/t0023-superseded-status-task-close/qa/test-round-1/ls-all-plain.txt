@@ -1,0 +1,13 @@
+$ task ls --all --project plain
+ID     STATUS           PROJECT        KIND           STEP           AGE   COST    Q  TITLE
+T0001  superseded→T0002 plain          research       research       42s   $0.01      old failed task
+T0002  blocked          plain          research       research       42s   $0.01   1  successor task
+T0003  superseded→T0002 plain          research       research       39s   $0.01      to cancel
+T0004  superseded→T0002 plain          research       research       37s   $0.01      blocked with question
+T0005  superseded→T0002 plain          research       research       30s   $0.00      running worker
+T0006  superseded→T0002 plain          research       research       23s   $0.00      late blocked result
+T0008  blocked          plain          research       research       16s   $0.01   1  refusal victim
+T0009  superseded→T0010 plain          research                      13s   $0.01      to fail
+T0010  blocked          plain          research       research       12s   $0.01   1  successor
+T0011  cancelled        plain          research       research       10s   $0.00      still running
+[exit 0]

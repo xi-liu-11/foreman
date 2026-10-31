@@ -1,0 +1,272 @@
+
+=== Upgrade path: tasks made by main's taskd, then restart on this branch (the handoff's order)
+PASS  main's schema has no superseded_by
+PASS  restart adds superseded_by
+PASS  existing rows keep their status
+$ task close T0001 --superseded-by T0002
+closed T0001 as superseded by T0002
+[exit 0]
+PASS  S1 failed closes: status
+PASS  S1 failed closes: pointer
+PASS  S1 one event on old
+PASS  S1 one event on successor
+
+=== S1 cancelled, S2 + S6 blocked with a real worker question
+cancelled
+$ task close T0003 --superseded-by T0002
+closed T0003 as superseded by T0002
+[exit 0]
+PASS  S1 cancelled closes
+PASS  open question before close
+$ task close T0004 --superseded-by T0002
+closed T0004 as superseded by T0002
+[exit 0]
+PASS  S1 blocked closes
+PASS  S2 question answered
+PASS  S18 blocked task not in inbox
+PASS  S6 no new step after real ticks
+PASS  S6 still superseded
+
+=== S3 + S4 running step: lease released, heartbeat cancels, real runner killed, task stays superseded
+lease: {"resource":"sim","machine":"local","granted":true,"position":0,"queue":0,"holder":{"task_id":"T0005","step":"research","attempt":1,"since":"2026-10-31T13:08:18.040Z","reason":null}}
+PASS  S7 a running task is refused
+PASS  S7 running task unchanged
+$ task close T0005 --superseded-by T0002
+closed T0005 as superseded by T0002
+[exit 0]
+PASS  S3 lease released
+heartbeat: {"ok":true,"cancel":true}
+PASS  S3 heartbeat says cancel
+step error: lease expired: runner stopped heartbeating
+PASS  S4 runner's result fails the step
+PASS  S4 task stays superseded
+S5 real CLI task block from the superseded task's worker:
+block #5 registered. Now finish with status "blocked"; the scheduler will resume this session with the answer.
+[exit 0]
+PASS  S5 answered at once
+PASS  S5 not in inbox
+closed T0006 as superseded by T0002
+late blocked result: {"step_status":"failed","task_status":"superseded"}
+PASS  S4 late blocked: step failed, task superseded
+PASS  S4 no block row added
+PASS  S4 still one step after ticks
+
+=== S7 + S8 + S9 + S10 refusals
+$ task close T0007 --superseded-by T0002
+error: T0007 is done; only failed, cancelled, gate or blocked tasks can be closed as superseded
+[exit 1]
+PASS  S7 done refused
+$ task close T0001 --superseded-by T0007
+error: T0001 is superseded; only failed, cancelled, gate or blocked tasks can be closed as superseded
+[exit 1]
+PASS  S7 superseded refused, pointer kept
+PASS  S7 no continues event on the refused target
+$ task close T0008 --superseded-by T9999
+error: no such task 'T9999'
+[exit 1]
+$ task close T0008 --superseded-by T0008
+error: T0008 cannot be superseded by itself
+[exit 1]
+$ task close T0002 --superseded-by T0001
+error: T0001 is already superseded by T0002; closing would make a cycle
+[exit 1]
+PASS  S8 unknown + self: unchanged
+PASS  S8 cycle refused
+$ task close T0008 (FOREMAN_URL dead: a request would give a connection error)
+error: --superseded-by <id> required
+[exit 1]
+PASS  S9 'close T0008' exits 1
+$ task close T0008 --superseded-by (FOREMAN_URL dead: a request would give a connection error)
+error: --superseded-by <id> required
+[exit 1]
+PASS  S9 'close T0008 --superseded-by' exits 1
+error: --superseded-by <id> required
+PASS  S9 empty value exits 1 without request
+$ task cancel T0001
+error: T0001 is superseded by T0002
+[exit 1]
+PASS  S10 cancel refused
+$ task retry T0001
+error: task is superseded, not failed
+[exit 1]
+PASS  S10 retry refused
+PASS  S10 cancel exit code
+PASS  S10 retry exit code
+
+=== S11 + S12 + S15 --continues without a branch
+$ task create --project plain --kind research --title successor --brief x --continues T0009
+created T0010 [research] successor
+[exit 0]
+successor: T0010
+PASS  S11 old superseded
+PASS  S11 events
+$ task create --project repo --kind implement --title nope --brief x --continues T9999
+error: no such task 'T9999'
+[exit 1]
+$ task create --project repo --kind implement --title nope --brief x --continues T0011
+error: T0011 is running; only failed, cancelled, gate or blocked tasks can be closed as superseded
+[exit 1]
+PASS  S12 no task, no id, no worktree
+PASS  S12 running task untouched
+$ task create --project plain --kind research --title t --brief x --continues (dead URL)
+error: --continues requires a task id
+[exit 1]
+PASS  S15 --continues as last arg exits 1 without a request
+Observation: a following flag is read as the value (shared opt() parser), so this one reaches taskd:
+$ task create --project plain --kind research --title t --brief x --continues --branch x
+error: no such task '--branch'
+[exit 1]
+PASS  S15 note: --continues --branch x exits 1 and creates nothing
+
+=== S13 + S14 --branch --start-at --continues against a real worktree
+gate task T0012 on fm/t0012-first-feature at /private/var/folders/7w/1mrvd9812138hkj9ndncqcvh0000gn/T/fm-t0023-e2e-rq9n4041/worktrees/repo/fm-t0012-first-feature; git status: []
+$ task create --project repo --kind implement --title recover --brief x --branch fm/t0013-second-feature --start-at implement --continues T0013
+error: could not prepare worktree: worktree /private/var/folders/7w/1mrvd9812138hkj9ndncqcvh0000gn/T/fm-t0023-e2e-rq9n4041/worktrees/repo/fm-t0013-second-feature has uncommitted changes; commit or stash them first
+[exit 1]
+PASS  S14 dirty: old keeps status
+$ task create --project repo --kind implement --title recover --brief x --branch no-such-branch --start-at implement --continues T0013
+error: could not prepare worktree: branch 'no-such-branch' does not exist in /private/var/folders/7w/1mrvd9812138hkj9ndncqcvh0000gn/T/fm-t0023-e2e-rq9n4041/repos/repo
+[exit 1]
+PASS  S14 missing branch: old keeps status
+$ task create --project repo --kind implement --title recover --brief x --branch fm/t0013-second-feature --start-at nonsense --continues T0013
+error: no step 'nonsense' in the implement_lite pipeline (plan, plan_approved, implement, qa, merge)
+[exit 1]
+PASS  S14 bad --start-at: old keeps status
+$ task create --project repo --kind implement --title recover --brief x --branch fm/t0012-first-feature --start-at implement --continues T0012
+created T0016
+PASS  S13 old superseded by new
+PASS  S13 adopts worktree
+PASS  S13 same branch
+PASS  S13 starts at implement
+PASS  S13 old worktree still there
+PASS  S13 worker ran in the adopted worktree
+PASS  S6 gate superseded: no step added to the old task
+$ task close T0013 --superseded-by T0016
+closed T0013 as superseded by T0016
+[exit 0]
+PASS  S1 gate closes directly
+PASS  S1 gate events
+
+=== S16 + S17 + S18 rendering
+$ task ls --all --project plain
+ID     STATUS           PROJECT        KIND           STEP           AGE   COST    Q  TITLE
+T0001  superseded→T0002 plain          research       research       42s   $0.01      old failed task
+T0002  blocked          plain          research       research       42s   $0.01   1  successor task
+T0003  superseded→T0002 plain          research       research       39s   $0.01      to cancel
+T0004  superseded→T0002 plain          research       research       37s   $0.01      blocked with question
+T0005  superseded→T0002 plain          research       research       30s   $0.00      running worker
+T0006  superseded→T0002 plain          research       research       23s   $0.00      late blocked result
+T0008  blocked          plain          research       research       16s   $0.01   1  refusal victim
+T0009  superseded→T0010 plain          research                      13s   $0.01      to fail
+T0010  blocked          plain          research       research       12s   $0.01   1  successor
+T0011  cancelled        plain          research       research       10s   $0.00      still running
+[exit 0]
+PASS  S16 full pointer
+PASS  S16 columns aligned
+ID     STATUS    PROJECT        KIND           STEP           AGE   COST    Q  TITLE
+T0007  done      clean          research                      18s   $0.01      finished
+PASS  S16 no superseded row: byte-identical to main
+T0001 [research] old failed task
+status: superseded   project: plain   step: research   qa cycles: 0
+superseded by: T0002
+brief:
+PASS  S17 line under status
+PASS  S17 json
+PASS  S17 ls json
+PASS  S17 no line on others
+PASS  S18 ls leaves out
+PASS  S18 ls leaves out gate-closed tasks
+PASS  S18 inbox leaves out blocked and gate
+PASS  S18 inbox json has no superseded task
+
+=== S19 + S20 tickets, real provider against fake Linear
+second ticket: TST-2
+closed T0017 as superseded by T0018
+linear after different-ticket close: [comment TST-1: Continued as T0018]
+PASS  S19 exactly one comment, no transition, no failure text
+closed T0019 as superseded by T0018
+closed T0020 as superseded by T0018
+PASS  S19 shared ticket and no ticket: silent
+linear after --continues: [comment TST-2: Foreman picked this up as T0022 (research): f
+comment TST-1: Continued as T0022
+transition TST-2: In Progress]
+PASS  S19 --continues posts it too
+$ task close T0023 --superseded-by T0018
+closed T0023 as superseded by T0018
+[exit 0]
+PASS  S20 provider down: still superseded
+PASS  S20 ticket.error recorded
+[{'stage': 'note', 'ref': 'TST-1', 'error': 'ECONNREFUSED: Unable to connect. Is the computer able to access the url?'}]
+
+=== S21 help
+8:              [--continues <id>]
+9-                                  on success, close <id> as superseded by the new task (use when recovering it on the same branch)
+--
+19:  task close <id> --superseded-by <other>
+20-                                  close a failed, cancelled, gate or blocked task whose work continued in <other>
+PASS  S21 close documented
+PASS  S21 --continues documented
+
+=== foreman watch (the implement step did not exercise it)
+Foreman  11:08:59 PM  5 active
+
+T0002 blocked  plain          research       $0.01  successor task
+      ? [2] Which colour should the button be?
+T0008 blocked  plain          research       $0.01  refusal victim
+      ? [6] Which colour should the button be?
+T0010 blocked  plain          research       $0.01  successor
+      ? [7] Which colour should the button be?
+T0018 blocked  tk             research       $0.01  b
+      ? [10] Which colour should the button be?
+T0022 blocked  tk             research       $0.01  f
+      ? [13] Which colour should the button be?
+
+recent:
+T0001 superseded→T0002 plain          $0.01  old failed task
+T0003 superseded→T0002 plain          $0.01  to cancel
+T0004 superseded→T0002 plain          $0.01  blocked with question
+T0005 superseded→T0002 plain          $0.00  running worker
+T0006 superseded→T0002 plain          $0.00  late blocked result
+T0007 done             clean          $0.01  finished
+
+PASS  watch shows the pointer in recent
+
+=== Dashboard in headless Chrome (temp profile)
+STATUS 0 running · 6 need you · 1 failed · 13 superseded · refreshed 23:09:09
+INBOX_SUPERSEDED False
+INBOX_FAILED True
+POINTERS 12
+PASS  dashboard counts failed and superseded separately
+PASS  dashboard: superseded never under Needs you
+PASS  dashboard: failed still under Needs you
+PASS  dashboard: Recent shows the pointer
+
+=== Final listing
+ID     STATUS           PROJECT        KIND           STEP           AGE   COST    Q  TITLE
+T0001  superseded→T0002 plain          research       research       1m    $0.01      old failed task
+T0002  blocked          plain          research       research       1m    $0.01   1  successor task
+T0003  superseded→T0002 plain          research       research       58s   $0.01      to cancel
+T0004  superseded→T0002 plain          research       research       56s   $0.01      blocked with question
+T0005  superseded→T0002 plain          research       research       49s   $0.00      running worker
+T0006  superseded→T0002 plain          research       research       42s   $0.00      late blocked result
+T0007  done             clean          research                      36s   $0.01      finished
+T0008  blocked          plain          research       research       35s   $0.01   1  refusal victim
+T0009  superseded→T0010 plain          research                      32s   $0.01      to fail
+T0010  blocked          plain          research       research       30s   $0.01   1  successor
+T0011  cancelled        plain          research       research       29s   $0.00      still running
+T0012  superseded→T0016 repo           implement_lite plan_approved  28s   $0.01      first feature
+T0013  superseded→T0016 repo           implement_lite plan_approved  26s   $0.01      second feature
+T0016  cancelled        repo           implement_lite qa             23s   $0.06      recover
+T0017  superseded→T0018 tk             research       research       17s   $0.01      a
+T0018  blocked          tk             research       research       17s   $0.01   1  b
+T0019  superseded→T0018 tk             research       research       17s   $0.01      c
+T0020  superseded→T0018 tk             research       research       17s   $0.01      d
+T0021  superseded→T0022 tk             research       research       17s   $0.01      e
+T0022  blocked          tk             research       research       14s   $0.01   1  f
+T0023  superseded→T0018 tk             research       research       13s   $0.01      g
+T0024  failed           clean          research                      6s    $0.01      real failed one
+13:08:56 ticket TST-1 (note) failed: ECONNREFUSED: Unable to connect. Is the computer able to access the url?
+
+RESULT: 78 passed, 0 failed
+
+home: /private/var/folders/7w/1mrvd9812138hkj9ndncqcvh0000gn/T/fm-t0023-e2e-rq9n4041

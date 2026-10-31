@@ -9,7 +9,7 @@
 // most one holder; a free key with waiters is granted to the oldest waiter.
 //
 // No import of taskd.ts or loadConfig(), so bun test drives it with a Store.
-import type { LeaseRow, Store, StepRow, TaskRow } from "./db";
+import { CLOSED_STATUSES, type LeaseRow, type Store, type StepRow, type TaskRow } from "./db";
 
 export const machineOf = (step: Pick<StepRow, "machine">) => step.machine ?? "local";
 
@@ -111,7 +111,7 @@ export function reconcileLeases(store: Store, maxMinutes: (project: string) => n
     for (const r of store.listLeases()) {
       const step = store.getStep(r.step_id);
       const task = store.getTask(r.task_id);
-      if (!step || step.status !== "running" || !task || ["done", "failed", "cancelled"].includes(task.status)) dropRow(store, r, "swept");
+      if (!step || step.status !== "running" || !task || CLOSED_STATUSES.includes(task.status)) dropRow(store, r, "swept");
     }
     const rows = store.listLeases();
     const keys = new Map(rows.map(r => [`${r.project}\0${r.machine}\0${r.resource}`, r]));

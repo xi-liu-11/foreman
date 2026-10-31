@@ -3,7 +3,8 @@
 import { Database } from "bun:sqlite";
 import { DB_PATH, ensureHome } from "./config";
 
-export type TaskStatus = "queued" | "running" | "blocked" | "gate" | "done" | "failed" | "cancelled";
+export type TaskStatus = "queued" | "running" | "blocked" | "gate" | "done" | "failed" | "cancelled" | "superseded";
+export const CLOSED_STATUSES: TaskStatus[] = ["done", "failed", "cancelled", "superseded"];
 export type StepStatus = "pending" | "queued" | "running" | "blocked" | "gate" | "done" | "failed" | "skipped";
 
 export interface TaskRow {
@@ -21,6 +22,7 @@ export interface TaskRow {
   feature_dir: string | null;
   ticket: string | null;
   pr_url: string | null;
+  superseded_by: string | null;
   qa_cycles: number;
   result: string | null;  // JSON final summary
   created_at: string;
@@ -175,6 +177,7 @@ export class Store {
   private migrate(): void {
     const cols = new Set((this.db.query("PRAGMA table_info(tasks)").all() as { name: string }[]).map(c => c.name));
     if (!cols.has("pr_url")) this.db.exec("ALTER TABLE tasks ADD COLUMN pr_url TEXT");
+    if (!cols.has("superseded_by")) this.db.exec("ALTER TABLE tasks ADD COLUMN superseded_by TEXT");
   }
 
   event(type: string, data: Record<string, unknown> = {}, task_id: string | null = null, step_id: number | null = null): void {
@@ -205,12 +208,12 @@ export class Store {
   listTasks(filter: { status?: string[]; project?: string; all?: boolean } = {}): TaskRow[] {
     const where: string[] = []; const args: any[] = [];
     if (filter.status?.length) { where.push(`status IN (${filter.status.map(() => "?").join(",")})`); args.push(...filter.status); }
-    else if (!filter.all) { where.push("status NOT IN ('done','failed','cancelled')"); }
+    else if (!filter.all) { where.push(`status NOT IN (${CLOSED_STATUSES.map(s => `'${s}'`).join(",")})`); }
     if (filter.project) { where.push("project = ?"); args.push(filter.project); }
     const sql = `SELECT * FROM tasks ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY priority ASC, created_at ASC`;
     return this.db.query(sql).all(...args) as TaskRow[];
   }
-  insertTask(t: Omit<TaskRow, "created_at" | "updated_at">): TaskRow {
+  insertTask(t: Omit<TaskRow, "created_at" | "updated_at" | "superseded_by">): TaskRow {
     const ts = now();
     this.db.run(`INSERT INTO tasks (id, project, kind, title, brief, status, pipeline, current_step, priority, branch, worktree, feature_dir, ticket, pr_url, qa_cycles, result, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,

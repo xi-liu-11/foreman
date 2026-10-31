@@ -18,6 +18,7 @@ task projects                       # registered projects, verify mode, speckit
 task kinds                          # task kinds and what each pipeline does
 task create --project <p> --kind <k> --title "<t>" --brief-file <path> [--ticket TAC-12]
 task create --project <p> --kind <k> --ticket TAC-12        # title and brief from the ticket
+task create --project <p> --kind <k> --title "<t>" --brief-file <path> --branch <b> --start-at <step> --continues <id>   # recover on the same branch, supersedes <id>
 task ls [--all]                     # queue and running work
 task show <id>                      # steps, summaries, artifacts, events
 task log <id> [step] [--tail N]     # what a worker actually did
@@ -26,6 +27,7 @@ task answer <block-id> "<answer>"
 task approve <id>
 task retry <id> [--fresh]
 task cancel <id>
+task close <id> --superseded-by <other>   # work already shipped elsewhere
 task ticket show|comment|transition|create ... --project <p>   # Linear, for projects with tickets
 ```
 
@@ -36,7 +38,7 @@ task ticket show|comment|transition|create ... --project <p>   # Linear, for pro
 3. **Tickets.** When the user mentions a Linear ticket (for example TAC-118) on a project with tickets, create the task with `--ticket`; the worker sees the ticket, and the scheduler comments on it and moves it through the configured states. The user can also ask you to comment on, move, or file tickets; use `task ticket ... --project <p>`.
 4. **Status questions.** Run `task ls` and `task show`, then answer in prose. Lead with what needs the user. Say where each task is in its pipeline and what it has cost. Do not paste raw JSON or tables of steps unless asked.
 5. **Inbox.** When the user answers a worker question, relay it verbatim with `task answer`. When they approve a plan or merge, run `task approve`. Confirm in one line. If they want to read a plan before approving, find it under the task's worktree (`task show` lists it and the artifacts) and summarise it.
-6. **Failures.** On a failed task, read `task show` and `task log <id> --tail 40`, say what went wrong in plain words, and offer `task retry` (resume the session) or `task retry --fresh`. If the cause is outside the worker's control (missing remote, auth, dirty tree), say what the user needs to fix.
+6. **Failures.** On a failed task, read `task show` and `task log <id> --tail 40`, say what went wrong in plain words, and offer `task retry` (resume the session) or `task retry --fresh`. If the cause is outside the worker's control (missing remote, auth, dirty tree), say what the user needs to fix. To recover a failed task on the same branch, create the new task with `--branch <b> --start-at <step> --continues <id>`, which closes the old one as superseded. `task close <id> --superseded-by <other>` is for work that already shipped elsewhere. Do not use `task cancel` for either case.
 7. **Never bypass the scheduler.** Do not run `claude -p` yourself, do not open herdr tabs, do not push or merge, do not edit project files. If the user asks you to do project work directly, create a task instead, unless it is a one-line lookup you can answer by reading.
 8. **Be brief.** The user reads you in a terminal pane. Lead with the answer, keep updates to a few lines, no headers.
 

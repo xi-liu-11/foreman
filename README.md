@@ -62,11 +62,25 @@ task answer 3 "Use option B."
 task approve T0007
 task retry T0004 [--fresh]
 task cancel T0004
+task close T0015 --superseded-by T0019   # work shipped via another task
+task create ... --branch <b> --start-at <step> --continues <id>   # continue a failed task
 ```
 
 Workers use the same CLI with `FOREMAN_TASK` and `FOREMAN_STEP` set:
 `task note`, `task block`, `task artifact add`, `task show`, `task ticket ...`,
 `task lease`, `task release`, `task leases`.
+
+### Superseded tasks
+
+`superseded` is a terminal status for a task whose work another task finished;
+`task cancel` reads as abandoned. A `failed`, `cancelled`, `gate` or `blocked`
+task can be closed with `task close <id> --superseded-by <other>`. To recover
+a task, use `task create --branch <b> --start-at <step> --continues <id>`, which
+creates the successor and closes the old task in one step; `task close` is for
+work that already shipped elsewhere. Closing stops running steps and releases
+their leases but leaves the worktree and branch alone. `task ls --all` shows
+`superseded→T0019`. A running taskd must be restarted to pick up the feature;
+the `superseded_by` column is added by an additive migration on start.
 
 ### Tickets (Linear)
 
@@ -78,7 +92,10 @@ the title and brief from the ticket, and the scheduler comments on it when the
 task starts, opens a PR, merges, or fails (transitioning to the configured
 states). Workers see the ticket in their prompt and can
 `task ticket show|comment|transition|create`; `task ticket ... --project <p>`
-does the same from your shell. Only taskd holds the API key.
+does the same from your shell. Only taskd holds the API key. Closing a task as
+superseded posts no failure comment and moves no state; if the old task's
+ticket differs from the successor's, it gets one comment, `Continued as <id>`,
+and a shared ticket gets none.
 
 ### Merge modes
 
@@ -152,7 +169,7 @@ over it. Workers use `task lease <name> [--wait N] [--reason ..]`,
   First come, first served. Holders and the queue are persisted in SQLite
   (`resource_leases`); grants happen on request, on release, and every tick.
 - A lease is released automatically when the step ends (done, failed, blocked,
-  heartbeat lease expired, task cancelled or failed), plus a sweep each tick.
+  heartbeat lease expired, task cancelled, superseded or failed), plus a sweep each tick.
 - `--wait` exits with code 3 when the wait runs out; the worker keeps its place
   in the queue and runs the command again.
 - Holds longer than `lease_max_minutes` (default 45) raise a `lease.overdue`
@@ -180,7 +197,7 @@ A running taskd must be restarted to pick this up: `foreman service restart`.
 9. ~~Resource leases: workers take turns on shared devices (`task lease`)~~
 10. Pipeline: a `plan_qa` verdict of `fail` currently falls through to the `plan_approved` gate, so the user is asked to approve a plan the reviewer rejected (T0020, 2026-10-30; worked around by cancelling and re-creating with `--branch <b> --start-at plan`). Make `plan_qa` an `on_fail → plan` loop like QA → implement, with its own cycle budget, and surface the findings at the gate if the budget runs out.
 11. Runner liveness under host overload: on 2026-10-31 the load average hit ~590 (orphaned Jest workers, two Metros, Maestro, emulator and simulator from concurrent workers) and three implement attempts of T0021 were failed with "runner stopped heartbeating" although the workers were alive; the retry budget was burnt by the environment, not the work. Fixes to weigh: heartbeat by pid liveness as well as HTTP; scale the lease window with load; have the runner kill its process group on exit so Metro/Jest children never outlive the step; pause dispatch while load is above a threshold; count a heartbeat-expiry failure separately from a work failure so it does not consume the 3-attempt budget.
-12. Task lifecycle: no way to mark a failed task as superseded. T0015 failed at merge (rebase conflict), the work shipped via T0019 on the same branch, and the only option was `task cancel`, which reads as abandoned. Add `task close <id> --superseded-by <id>` (status `superseded`, shown in `ls --all` with the pointer), and have `task create --branch <b>` offer to link the task it continues.
+12. ~~Task lifecycle: no way to mark a failed task as superseded. T0015 failed at merge (rebase conflict), the work shipped via T0019 on the same branch, and the only option was `task cancel`, which reads as abandoned. Add `task close <id> --superseded-by <id>` (status `superseded`, shown in `ls --all` with the pointer), and have `task create --branch <b>` offer to link the task it continues.~~
 
 ## Testing
 

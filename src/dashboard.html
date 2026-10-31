@@ -22,6 +22,7 @@
   .badge.blocked, .badge.gate { border-color:var(--warn); color:var(--warn) }
   .badge.failed { border-color:var(--bad); color:var(--bad) }
   .badge.done { border-color:var(--ok); color:var(--ok) }
+  .badge.superseded { border-style:dashed }
   .meta { color:var(--mute); font-size:12px }
   .steps { display:flex; gap:4px; flex-wrap:wrap; margin:8px 0 }
   .step { font-size:11px; padding:2px 8px; border-radius:4px; border:1px solid var(--line); color:var(--mute) }
@@ -120,9 +121,11 @@ async function refresh() {
     const rest = active.filter(t => !needs.includes(t));
     document.getElementById("active").outerHTML = `<div id="active" class="${rest.length ? "" : "empty"}">${rest.length ? rest.map(t => card(t, details[t.id])).join("") : "no active tasks"}</div>`;
     const recent = all.filter(t => !active.includes(t) && !needs.includes(t)).slice(0, 15);
-    document.getElementById("recent").innerHTML = recent.length ? `<table><tr><th>id</th><th>status</th><th>project</th><th>kind</th><th>age</th><th>cost</th><th>title</th></tr>${recent.map(t => `<tr><td class="id">${t.id}</td><td><span class="badge ${t.status}">${t.status}</span></td><td>${esc(t.project)}</td><td>${t.kind}</td><td>${ago(t.created_at)}</td><td>${money(t.cost_usd)}</td><td>${esc(t.title)}</td></tr>`).join("")}</table>` : `<span class="empty">none</span>`;
+    document.getElementById("recent").innerHTML = recent.length ? `<table><tr><th>id</th><th>status</th><th>project</th><th>kind</th><th>age</th><th>cost</th><th>title</th></tr>${recent.map(t => `<tr><td class="id">${t.id}</td><td><span class="badge ${t.status}">${t.superseded_by ? "superseded→" + t.superseded_by : t.status}</span></td><td>${esc(t.project)}</td><td>${t.kind}</td><td>${ago(t.created_at)}</td><td>${money(t.cost_usd)}</td><td>${esc(t.title)}</td></tr>`).join("")}</table>` : `<span class="empty">none</span>`;
     const running = all.filter(t => t.status === "running").length;
-    document.getElementById("status").textContent = `${running} running · ${needs.length} need you · refreshed ${new Date().toLocaleTimeString()}`;
+    const failed = all.filter(t => t.status === "failed").length;
+    const superseded = all.filter(t => t.status === "superseded").length;
+    document.getElementById("status").textContent = `${running} running · ${needs.length} need you · ${failed} failed · ${superseded} superseded · refreshed ${new Date().toLocaleTimeString()}`;
   } catch (e) {
     document.getElementById("status").innerHTML = `<span class="err">${esc(e.message)}${!token ? " — open this page via `foreman dashboard` so it gets the token" : ""}</span>`;
   }

@@ -34,6 +34,7 @@ const ago = (iso: string | null) => {
   const s = Math.max(0, (Date.now() - Date.parse(iso)) / 1000);
   return s < 60 ? `${Math.round(s)}s` : s < 3600 ? `${Math.round(s / 60)}m` : s < 86400 ? `${Math.round(s / 3600)}h` : `${Math.round(s / 86400)}d`;
 };
+const statusText = (t: any) => t.superseded_by ? `superseded→${t.superseded_by}` : t.status;
 const holderText = (h: any) => h ? `${h.task_id}/${h.step}#${h.attempt} for ${ago(h.since)}${h.reason ? ` (${h.reason})` : ""}` : "nobody";
 const out = (data: unknown, text: () => string) => console.log(jsonOut ? JSON.stringify(data, null, 2) : text());
 
@@ -44,6 +45,8 @@ User commands
                                   with --ticket, title and brief default to the ticket's
               [--branch <existing>] [--start-at <step>]
                                   attach to an existing branch (not checked out anywhere) and/or skip earlier pipeline steps
+              [--continues <id>]
+                                  on success, close <id> as superseded by the new task (use when recovering it on the same branch)
   task ls [--all] [--project <name>] [--status queued,running,...]
   task show <id>
   task log <id> [step] [--attempt N] [--tail N]
@@ -53,6 +56,8 @@ User commands
   task approve <id>               approve the gate the task is waiting at
   task retry <id> [--fresh]       retry a failed task (fresh = new session)
   task cancel <id>
+  task close <id> --superseded-by <other>
+                                  close a failed, cancelled, gate or blocked task whose work continued in <other>
   task kinds                      list task kinds (pipelines)
   task projects                   list registered projects
   task ticket ls --project <name> [--states "Todo,In Progress"]
@@ -97,6 +102,7 @@ async function taskMain(): Promise<void> {
     case undefined: case "help": case "--help": console.log(TASK_HELP); return;
 
     case "create": {
+      if (flag("continues") && !opt("continues")) die("--continues requires a task id");
       const project = opt("project") ?? die("--project required");
       const kind = opt("kind") ?? die("--kind required");
       const ticket = opt("ticket");
@@ -104,7 +110,7 @@ async function taskMain(): Promise<void> {
       const briefFile = opt("brief-file");
       const brief = briefFile ? await Bun.file(briefFile).text() : opt("brief") ?? rest.join(" ") ?? "";
       if (!brief.trim() && !ticket) die("--brief or --brief-file required (or --ticket)");
-      const t = await client.post("/tasks", { project, kind, title, brief: brief.trim() || undefined, priority: opt("priority"), ticket, branch: opt("branch"), start_at: opt("start-at") });
+      const t = await client.post("/tasks", { project, kind, title, brief: brief.trim() || undefined, priority: opt("priority"), ticket, branch: opt("branch"), start_at: opt("start-at"), continues: opt("continues") });
       out(t, () => `created ${t.id} [${t.kind}] ${t.title}`);
       return;
     }
@@ -116,8 +122,9 @@ async function taskMain(): Promise<void> {
       const tasks: any[] = await client.get(`/tasks?${q}`);
       out(tasks, () => {
         if (!tasks.length) return "no tasks";
-        const head = `${pad("ID", 6)} ${pad("STATUS", 9)} ${pad("PROJECT", 14)} ${pad("KIND", 14)} ${pad("STEP", 14)} ${pad("AGE", 5)} ${pad("COST", 7)} ${pad("Q", 2)} TITLE`;
-        return [head, ...tasks.map(t => `${pad(t.id, 6)} ${pad(t.status, 9)} ${pad(t.project, 14)} ${pad(t.kind, 14)} ${pad(t.current_step ?? "", 14)} ${pad(ago(t.created_at), 5)} ${pad("$" + t.cost_usd.toFixed(2), 7)} ${pad(t.open_blocks || "", 2)} ${t.title}`)].join("\n");
+        const w = Math.max(9, ...tasks.map(t => statusText(t).length));
+        const head = `${pad("ID", 6)} ${pad("STATUS", w)} ${pad("PROJECT", 14)} ${pad("KIND", 14)} ${pad("STEP", 14)} ${pad("AGE", 5)} ${pad("COST", 7)} ${pad("Q", 2)} TITLE`;
+        return [head, ...tasks.map(t => `${pad(t.id, 6)} ${pad(statusText(t), w)} ${pad(t.project, 14)} ${pad(t.kind, 14)} ${pad(t.current_step ?? "", 14)} ${pad(ago(t.created_at), 5)} ${pad("$" + t.cost_usd.toFixed(2), 7)} ${pad(t.open_blocks || "", 2)} ${t.title}`)].join("\n");
       });
       return;
     }
@@ -129,6 +136,7 @@ async function taskMain(): Promise<void> {
         const lines = [
           `${t.id} [${t.kind}] ${t.title}`,
           `status: ${t.status}   project: ${t.project}   step: ${t.current_step ?? "-"}   qa cycles: ${t.qa_cycles}`,
+          t.superseded_by ? `superseded by: ${t.superseded_by}` : "",
           t.worktree ? `worktree: ${t.worktree} (${t.branch})` : "",
           t.ticket ? `ticket: ${t.ticket}` : "",
           t.pr_url ? `pr: ${t.pr_url}` : "",
@@ -203,6 +211,13 @@ async function taskMain(): Promise<void> {
     case "approve": { const id = rest[0] ?? die("task id required"); const r = await client.post(`/tasks/${id}/approve`, {}); out(r, () => `approved ${r.gate}`); return; }
     case "retry": { const id = rest[0] ?? die("task id required"); const r = await client.post(`/tasks/${id}/retry`, { fresh: flag("fresh") }); out(r, () => `retrying at ${r.step}`); return; }
     case "cancel": { const id = rest[0] ?? die("task id required"); await client.post(`/tasks/${id}/cancel`, {}); console.log("cancelled"); return; }
+    case "close": {
+      const id = rest[0] ?? die("task id required");
+      const other = opt("superseded-by") || die("--superseded-by <id> required");
+      const r = await client.post(`/tasks/${id}/close`, { superseded_by: other });
+      out(r, () => `closed ${id} as superseded by ${r.superseded_by}`);
+      return;
+    }
     case "kinds": out(PIPELINES, () => Object.values(PIPELINES).map(p => `${pad(p.kind, 11)} ${p.description}${p.needs_worktree ? " (worktree)" : ""}`).join("\n")); return;
     case "projects": { const ps: any[] = await client.get("/projects"); out(ps, () => ps.map(p => `${pad(p.name, 16)} ${pad(p.verify, 8)} ${p.speckit ? "speckit" : "       "} ${p.path}`).join("\n") || `no projects; edit ${CONFIG_PATH}`); return; }
 
@@ -347,7 +362,7 @@ async function foremanMain(): Promise<void> {
             for (const e of notes) lines.push(`      ${e.ts.slice(11, 16)} ${JSON.parse(e.data).text.split("\n")[0].slice(0, 110)}`);
           }
           const recent = all.filter(t => !active.includes(t)).slice(0, 6);
-          if (recent.length) { lines.push("", "recent:"); for (const t of recent) lines.push(`${t.id} ${pad(t.status, 9)} ${pad(t.project, 14)} $${t.cost_usd.toFixed(2)}  ${t.title}`); }
+          if (recent.length) { const w = Math.max(9, ...recent.map(t => statusText(t).length)); lines.push("", "recent:"); for (const t of recent) lines.push(`${t.id} ${pad(statusText(t), w)} ${pad(t.project, 14)} $${t.cost_usd.toFixed(2)}  ${t.title}`); }
           body = lines.join("\n");
         } catch (e: any) { body = `taskd unreachable: ${e.message}`; }
         process.stdout.write("\x1b[2J\x1b[H" + body + "\n");

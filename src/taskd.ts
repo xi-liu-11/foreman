@@ -11,7 +11,7 @@
 // - Resume after an answer happens in the scheduler, not in the HTTP handler.
 import { join } from "node:path";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { Store, type TaskRow, type StepRow, now } from "./db";
+import { Store, CLOSED_STATUSES, type TaskRow, type StepRow, now } from "./db";
 import { loadConfig, denyListFor, deviceResources, REPO_ROOT, RUNS_DIR, type ForemanConfig, type ProjectConfig } from "./config";
 import { requestLease, releaseLease, releaseStepLeases, reconcileLeases, leaseView, devicePrompt } from "./leases";
 import { pipelineFor, type PipelineStep } from "./pipelines";
@@ -19,7 +19,7 @@ import * as herdr from "./herdr";
 import * as git from "./git";
 import { providerFor, ticketContext, type Ticket } from "./tickets";
 
-const cfg: ForemanConfig = loadConfig();
+export const cfg: ForemanConfig = loadConfig();
 const store = new Store();
 let herdrOk = false;
 const cancelRequested = new Set<number>(); // step ids whose runner should stop
@@ -126,7 +126,10 @@ async function tick(): Promise<void> {
     await expireLeases();
     try { reconcileLeases(store, p => cfg.projects[p]?.lease_max_minutes ?? cfg.defaults.lease_max_minutes); }
     catch (e: any) { log("reconcile resource leases failed:", e.message); store.event("scheduler.error", { error: `resource leases: ${e.message}` }); }
-    for (const task of store.listTasks({ status: ["queued", "running", "blocked"] })) {
+    for (const { id } of store.listTasks({ status: ["queued", "running", "blocked"] })) {
+      // Earlier iterations await, so this task may have been closed since the listing.
+      const task = store.getTask(id);
+      if (!task || !["queued", "running", "blocked"].includes(task.status)) continue;
       try { await advance(task); } catch (e: any) { log(`advance ${task.id} failed:`, e.message); store.event("scheduler.error", { error: e.message }, task.id); }
     }
   } finally { ticking = false; }
@@ -275,7 +278,7 @@ async function settle(task: TaskRow, latest: StepRow, role: string, onDone: () =
     case "blocked": {
       // R6: resume lives here. Once every question on this attempt is answered, start the next attempt.
       if (store.openBlocks(task.id).some(b => b.step_id === latest.id)) return;
-      const answered = store.blocksForStep(latest.id).filter(b => b.answer && b.answer !== "(task cancelled)");
+      const answered = store.blocksForStep(latest.id).filter(b => b.answer && b.answer !== "(task cancelled)" && b.answer !== "(task superseded)");
       if (!answered.length) return;
       const resume = `The user answered your question(s):\n\n${answered.map(x => `Q: ${x.question}\nA: ${x.answer}`).join("\n\n")}\n\nContinue the step from where you left off.`;
       await createStep(task, latest.name, role, latest.attempt + 1, latest.session_id, resume);
@@ -283,7 +286,7 @@ async function settle(task: TaskRow, latest: StepRow, role: string, onDone: () =
       return;
     }
     case "failed": {
-      if (task.status === "cancelled") return;
+      if (isStopped(task)) return;
       const failures = failureCount(task.id, latest.name);
       if (failures >= cfg.defaults.max_attempts) return failTask(task, `step '${latest.name}' failed ${failures} times: ${latest.error ?? "unknown error"}`);
       const resume = latest.session_id
@@ -377,6 +380,36 @@ async function failTask(task: TaskRow, reason: string): Promise<void> {
   await ticketHook(task, "failed", `Foreman ${task.id} failed: ${reason}`);
 }
 
+// Cancelled and superseded tasks ignore whatever their workers still report.
+const isStopped = (t: TaskRow) => t.status === "cancelled" || t.status === "superseded";
+
+// Shared by cancel and supersede. Caller holds the transaction.
+function stopTask(task: TaskRow, why: "cancelled" | "superseded"): void {
+  for (const b of store.openBlocks(task.id)) store.answerBlock(b.id, `(task ${why})`);
+  for (const s of store.stepsForTask(task.id).filter(s => s.status === "running")) {
+    releaseStepLeases(store, s.id, `task ${why}`);
+    cancelRequested.add(s.id);
+  }
+}
+
+const cannotSupersede = (t: TaskRow): string | null => ["failed", "cancelled", "gate", "blocked"].includes(t.status)
+  ? null : `${t.id} is ${t.status}; only failed, cancelled, gate or blocked tasks can be closed as superseded`;
+
+// Caller holds the transaction.
+function markSuperseded(task: TaskRow, successorId: string): void {
+  stopTask(task, "superseded");
+  store.updateTask(task.id, { status: "superseded", superseded_by: successorId });
+  store.event("task.superseded", { superseded_by: successorId, message: `superseded by ${successorId}` }, task.id);
+  store.event("task.continues", { continues: task.id, message: `continues ${task.id}` }, successorId);
+}
+
+// Best-effort, after the commit. A shared ticket is covered by the successor's own comments.
+async function noteContinued(task: TaskRow, successor: TaskRow): Promise<void> {
+  if (task.ticket && task.ticket !== successor.ticket)
+    await ticketHook(task, "note", `Continued as ${successor.id}`)
+      .catch((e: any) => { store.event("ticket.error", { stage: "note", ref: task.ticket, error: e.message }, task.id); });
+}
+
 // ---------------------------------------------------------------- results
 
 async function handleResult(step: StepRow, body: any): Promise<{ step_status: string; task_status: string }> {
@@ -390,7 +423,7 @@ async function handleResult(step: StepRow, body: any): Promise<{ step_status: st
   else if (r.is_error || body.exit_code !== 0) { status = "failed"; error = r.subtype ?? r.result ?? body.stderr_tail?.trim().split("\n").pop() ?? `exit ${body.exit_code}`; }
   else if (r.subtype && r.subtype !== "success") { status = "failed"; error = r.subtype; }
   else { status = "failed"; error = "worker ended without structured output"; }
-  if (task.status === "cancelled") { status = "failed"; error = error ?? "cancelled"; }
+  if (isStopped(task)) { status = "failed"; error = error ?? task.status; }
 
   tx(() => {
     store.updateStep(step.id, {
@@ -406,7 +439,7 @@ async function handleResult(step: StepRow, body: any): Promise<{ step_status: st
     if (status === "blocked") {
       // Only add a placeholder question when the worker never registered one (answered or open).
       if (!store.blocksForStep(step.id).length) store.insertBlock(task.id, step.id, so?.summary ?? "Worker reported blocked without a question.");
-      if (task.status !== "cancelled") store.updateTask(task.id, { status: "blocked" });
+      if (!isStopped(task)) store.updateTask(task.id, { status: "blocked" });
     }
     releaseStepLeases(store, step.id, `step ${status}`);
   });
@@ -487,10 +520,16 @@ export async function route(req: Request): Promise<Response> {
     return json(tasks.map(t => ({ ...t, open_blocks: store.openBlocks(t.id).length, cost_usd: store.stepsForTask(t.id).reduce((a, s) => a + s.cost_usd, 0) })));
   }
   if (p === "/tasks" && req.method === "POST") {
-    const { project: projName, kind, priority, ticket, branch: existingBranch, start_at } = body;
+    const { project: projName, kind, priority, ticket, branch: existingBranch, start_at, continues } = body;
     let { title, brief } = body;
     if (!cfg.projects[projName]) return bad(`unknown project '${projName}'. Known: ${Object.keys(cfg.projects).join(", ") || "(none; add one to config.toml)"}`);
     const proj = cfg.projects[projName];
+    if (continues) {
+      const old = store.getTask(String(continues));
+      if (!old) return bad(`no such task '${continues}'`);
+      const refusal = cannotSupersede(old);
+      if (refusal) return bad(refusal);
+    }
     // A ticket can stand in for the title and brief.
     if (ticket && (!title || !brief)) {
       try {
@@ -513,14 +552,27 @@ export async function route(req: Request): Promise<Response> {
         git.linkClaudeMemory(proj.path, wt.worktree);
       } catch (e: any) { return bad(`could not prepare worktree: ${e.message}`); }
     }
-    const task = tx(() => {
+    let continued: TaskRow | null = null;
+    let task: TaskRow;
+    try { task = tx(() => {
       const t = store.insertTask({ id, project: projName, kind: pipeline.kind, title, brief, status: "queued", pipeline: JSON.stringify(pipeline.steps), current_step: start_at ?? null, priority: Number(priority ?? 5), branch: wt?.branch ?? null, worktree: wt?.worktree ?? null, feature_dir: wt?.feature_dir ?? null, ticket: ticket ?? null, pr_url: null, qa_cycles: 0, result: null });
-      store.event("task.created", { kind: pipeline.kind, title, branch: wt?.branch ?? null, worktree: wt?.worktree ?? null, start_at: start_at ?? null, existing_branch: Boolean(existingBranch) }, t.id);
+      store.event("task.created", { kind: pipeline.kind, title, branch: wt?.branch ?? null, worktree: wt?.worktree ?? null, start_at: start_at ?? null, existing_branch: Boolean(existingBranch), continues: continues ?? null }, t.id);
+      if (continues) {
+        // setupWorktree awaited since the first check, so the task may have moved on.
+        continued = store.getTask(String(continues))!;
+        const refusal = cannotSupersede(continued);
+        if (refusal) throw new Error(refusal);
+        markSuperseded(continued, t.id);
+      }
       return t;
-    });
+    }); } catch (e: any) {
+      if (!continues) throw e;
+      return bad(`${e.message}${wt ? `; left the worktree at ${wt.worktree}` : ""}`);
+    }
     log(`created ${task.id} [${kind}] ${title}`);
     setTimeout(tick, 50);
     void ticketHook(task, "start", `Foreman picked this up as ${task.id} (${pipeline.kind}): ${title}`);
+    if (continued) await noteContinued(continued, task);
     return json(task, 201);
   }
   // Ticket routes: the project (or a task id, for workers) selects the provider.
@@ -563,18 +615,32 @@ export async function route(req: Request): Promise<Response> {
     const task = store.getTask(mm[1]); if (!task) return bad("no such task", 404);
     return json({ task, steps: store.stepsForTask(task.id), blocks: store.openBlocks(task.id), artifacts: store.artifactsForTask(task.id), leases: store.leasesForTask(task.id).map(r => leaseView(store, r)), events: store.eventsForTask(task.id, 50).reverse() });
   }
-  if ((mm = m(/^\/tasks\/([^/]+)\/(cancel|approve|retry|note|artifacts|blocks)$/)) && req.method === "POST") {
+  if ((mm = m(/^\/tasks\/([^/]+)\/(cancel|close|approve|retry|note|artifacts|blocks)$/)) && req.method === "POST") {
     const task = store.getTask(mm[1]); if (!task) return bad("no such task", 404);
     const action = mm[2];
     if (action === "cancel") {
-      const running = store.stepsForTask(task.id).filter(s => s.status === "running");
+      if (task.status === "superseded") return bad(`${task.id} is superseded by ${task.superseded_by}`);
       tx(() => {
-        for (const b of store.openBlocks(task.id)) store.answerBlock(b.id, "(task cancelled)");
+        stopTask(task, "cancelled");
         store.updateTask(task.id, { status: "cancelled" }); store.event("task.cancelled", {}, task.id);
-        for (const s of running) releaseStepLeases(store, s.id, "task cancelled");
       });
-      for (const s of running) cancelRequested.add(s.id);
       return json({ ok: true });
+    }
+    if (action === "close") {
+      if (!body.superseded_by) return bad("superseded_by required");
+      const refusal = cannotSupersede(task);
+      if (refusal) return bad(refusal);
+      const other = store.getTask(String(body.superseded_by));
+      if (!other) return bad(`no such task '${body.superseded_by}'`);
+      if (other.id === task.id) return bad(`${task.id} cannot be superseded by itself`);
+      const seen = new Set<string>();
+      for (let t: TaskRow | null = other; t && !seen.has(t.id); t = t.superseded_by ? store.getTask(t.superseded_by) : null) {
+        if (t.id === task.id) return bad(`${other.id} is already superseded by ${task.id}; closing would make a cycle`);
+        seen.add(t.id);
+      }
+      tx(() => markSuperseded(task, other.id));
+      await noteContinued(task, other);
+      return json({ ok: true, superseded_by: other.id });
     }
     if (action === "approve") {
       if (task.status !== "gate") return bad(`task is ${task.status}, not waiting at a gate`);
@@ -622,7 +688,7 @@ export async function route(req: Request): Promise<Response> {
       if (!body.question) return bad("question required");
       const b = store.insertBlock(task.id, Number(body.step_id), String(body.question));
       store.event("task.blocked", { question: body.question }, task.id, b.step_id);
-      if (["cancelled", "failed", "done"].includes(task.status)) store.answerBlock(b.id, `(task ${task.status})`);
+      if (CLOSED_STATUSES.includes(task.status)) store.answerBlock(b.id, `(task ${task.status})`);
       return json(b, 201);
     }
   }

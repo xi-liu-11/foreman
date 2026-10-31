@@ -1,0 +1,20 @@
+Foreman  11:08:59 PM  5 active
+
+T0002 blocked  plain          research       $0.01  successor task
+      ? [2] Which colour should the button be?
+T0008 blocked  plain          research       $0.01  refusal victim
+      ? [6] Which colour should the button be?
+T0010 blocked  plain          research       $0.01  successor
+      ? [7] Which colour should the button be?
+T0018 blocked  tk             research       $0.01  b
+      ? [10] Which colour should the button be?
+T0022 blocked  tk             research       $0.01  f
+      ? [13] Which colour should the button be?
+
+recent:
+T0001 superseded→T0002 plain          $0.01  old failed task
+T0003 superseded→T0002 plain          $0.01  to cancel
+T0004 superseded→T0002 plain          $0.01  blocked with question
+T0005 superseded→T0002 plain          $0.00  running worker
+T0006 superseded→T0002 plain          $0.00  late blocked result
+T0007 done             clean          $0.01  finished
