@@ -24,6 +24,8 @@ export interface TaskRow {
   pr_url: string | null;
   superseded_by: string | null;
   qa_cycles: number;
+  plan_cycles: number;
+  rejection: string | null; // JSON { gate, target, feedback, at } while a rejected gate is being revised
   result: string | null;  // JSON final summary
   created_at: string;
   updated_at: string;
@@ -113,6 +115,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   priority INTEGER NOT NULL DEFAULT 5,
   branch TEXT, worktree TEXT, feature_dir TEXT, ticket TEXT,
   qa_cycles INTEGER NOT NULL DEFAULT 0,
+  plan_cycles INTEGER NOT NULL DEFAULT 0,
+  rejection TEXT,
   result TEXT,
   created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
@@ -178,6 +182,8 @@ export class Store {
     const cols = new Set((this.db.query("PRAGMA table_info(tasks)").all() as { name: string }[]).map(c => c.name));
     if (!cols.has("pr_url")) this.db.exec("ALTER TABLE tasks ADD COLUMN pr_url TEXT");
     if (!cols.has("superseded_by")) this.db.exec("ALTER TABLE tasks ADD COLUMN superseded_by TEXT");
+    if (!cols.has("plan_cycles")) this.db.exec("ALTER TABLE tasks ADD COLUMN plan_cycles INTEGER NOT NULL DEFAULT 0");
+    if (!cols.has("rejection")) this.db.exec("ALTER TABLE tasks ADD COLUMN rejection TEXT");
   }
 
   event(type: string, data: Record<string, unknown> = {}, task_id: string | null = null, step_id: number | null = null): void {
@@ -213,7 +219,7 @@ export class Store {
     const sql = `SELECT * FROM tasks ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY priority ASC, created_at ASC`;
     return this.db.query(sql).all(...args) as TaskRow[];
   }
-  insertTask(t: Omit<TaskRow, "created_at" | "updated_at" | "superseded_by">): TaskRow {
+  insertTask(t: Omit<TaskRow, "created_at" | "updated_at" | "superseded_by" | "plan_cycles" | "rejection">): TaskRow {
     const ts = now();
     this.db.run(`INSERT INTO tasks (id, project, kind, title, brief, status, pipeline, current_step, priority, branch, worktree, feature_dir, ticket, pr_url, qa_cycles, result, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,

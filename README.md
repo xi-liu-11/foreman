@@ -56,10 +56,11 @@ task create --project foreman --kind research --title "..." --brief "..."
 task ls
 task show T0001
 task log T0001 [research] [--attempt N] [--tail N]   # what the worker did
-task inbox                 # questions and gates waiting on you
+task inbox                 # questions, gates (approve or reject) and tasks being revised
 task inbox --project foreman   # only that project's questions and gates
 task answer 3 "Use option B."
 task approve T0007
+task reject T0007 "the retry path is missing"   # send a plan or merge back with feedback
 task retry T0004 [--fresh]
 task cancel T0004
 task close T0015 --superseded-by T0019   # work shipped via another task
@@ -142,6 +143,23 @@ gate it squash-merges, deletes the branch, and removes the worktree. QA can send
 the task back to `implement` up to `max_qa_cycles` times; the failed review and
 test summaries are injected into the next implement prompt.
 
+Plan QA works the same way: when `plan_qa` fails, the scheduler re-queues `plan`
+with the findings as `QA_FEEDBACK` (summary, notes, and a pointer to
+`specs/<feature>/qa/plan-review.md`) and runs `plan_qa` again. `max_plan_cycles`
+(default 2, under `defaults`) is the number of plan QA reviews per round, unlike
+`max_qa_cycles`, which counts revisions. If the last review still fails, the
+task goes to the `plan_approved` gate anyway, labelled "plan QA still fails after
+N review(s); see <feature_dir>/qa/plan-review.md". A plan QA fail never fails the
+task or uses the retry budget; `task show` shows the plan cycles.
+
+`task reject <id> "<feedback>"` works at the `plan_approved` and `merge_approved`
+gates. It records the feedback as a note, re-queues `plan` (plan gate) or
+`implement` (merge gate) with the feedback as `QA_FEEDBACK`, re-runs every step
+up to the gate, and reopens the gate with the cycle counter reset. `task inbox`
+lists such tasks under `revising:`, and `task ls` and the dashboard show
+"rejected, revising". A running taskd must be restarted to pick this up:
+`foreman service restart` (check `task ls --all` first).
+
 Pipelines are data in `src/pipelines.ts`. Role prompts are in `roles/`, step
 prompts in `prompts/`, and the worker protocol in `prompts/worker-preamble.md`.
 
@@ -195,7 +213,7 @@ A running taskd must be restarted to pick this up: `foreman service restart`.
 8. Merge conflicts: when the rebase in `merge_direct` conflicts, insert a developer `resolve` step (rebase, resolve, run the suite) and retry the merge, instead of failing the task (seen on T0004 after 026 landed first)
 9. Runner: end the step when the `result` event arrives, instead of waiting for `claude -p` to exit. A worker that leaves background shell jobs running (emulator wait loops, Maestro) keeps the process alive until `step_timeout_min`, so a finished step is reported as a timeout. Seen three times on T0006 (attempts 7–9). Kill the process after a short grace period once the structured output is in; also add "no background jobs that outlive the turn" to the worker preamble.
 9. ~~Resource leases: workers take turns on shared devices (`task lease`)~~
-10. Pipeline: a `plan_qa` verdict of `fail` currently falls through to the `plan_approved` gate, so the user is asked to approve a plan the reviewer rejected (T0020, 2026-10-30; worked around by cancelling and re-creating with `--branch <b> --start-at plan`). Make `plan_qa` an `on_fail → plan` loop like QA → implement, with its own cycle budget, and surface the findings at the gate if the budget runs out.
+10. ~~Pipeline: a `plan_qa` verdict of `fail` currently falls through to the `plan_approved` gate, so the user is asked to approve a plan the reviewer rejected (T0020, 2026-10-30; worked around by cancelling and re-creating with `--branch <b> --start-at plan`). Make `plan_qa` an `on_fail → plan` loop like QA → implement, with its own cycle budget, and surface the findings at the gate if the budget runs out.~~
 11. Runner liveness under host overload: on 2026-10-31 the load average hit ~590 (orphaned Jest workers, two Metros, Maestro, emulator and simulator from concurrent workers) and three implement attempts of T0021 were failed with "runner stopped heartbeating" although the workers were alive; the retry budget was burnt by the environment, not the work. Fixes to weigh: heartbeat by pid liveness as well as HTTP; scale the lease window with load; have the runner kill its process group on exit so Metro/Jest children never outlive the step; pause dispatch while load is above a threshold; count a heartbeat-expiry failure separately from a work failure so it does not consume the 3-attempt budget.
 12. ~~Task lifecycle: no way to mark a failed task as superseded. T0015 failed at merge (rebase conflict), the work shipped via T0019 on the same branch, and the only option was `task cancel`, which reads as abandoned. Add `task close <id> --superseded-by <id>` (status `superseded`, shown in `ls --all` with the pointer), and have `task create --branch <b>` offer to link the task it continues.~~
 

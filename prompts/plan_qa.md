@@ -1,1 +1,3 @@
 Run `/speckit.analyze` on `specs/{{FEATURE}}/` and review the plan against the constitution. Complete the checklists honestly. Write `specs/{{FEATURE}}/qa/plan-review.md` with findings. Set `verdict` to "pass" only if the spec, plan, and tasks are consistent and complete enough to implement without guessing; otherwise "fail" with the specific gaps.
+
+Give every finding a short stable id (C1, U2, ...) so the architect can answer it. If `specs/{{FEATURE}}/qa/plan-revision.md` exists, this is re-review {{PLAN_CYCLE}}: check each answered finding against the revised artifacts, keep ids of findings that remain, and rewrite `plan-review.md` for the current state (note the round at the top). Commit the qa directory.

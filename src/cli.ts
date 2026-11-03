@@ -34,7 +34,7 @@ const ago = (iso: string | null) => {
   const s = Math.max(0, (Date.now() - Date.parse(iso)) / 1000);
   return s < 60 ? `${Math.round(s)}s` : s < 3600 ? `${Math.round(s / 60)}m` : s < 86400 ? `${Math.round(s / 3600)}h` : `${Math.round(s / 86400)}d`;
 };
-const statusText = (t: any) => t.superseded_by ? `superseded→${t.superseded_by}` : t.status;
+const statusText = (t: any) => t.superseded_by ? `superseded→${t.superseded_by}` : t.rejection && ["queued", "running", "blocked"].includes(t.status) ? "rejected, revising" : t.status;
 const holderText = (h: any) => h ? `${h.task_id}/${h.step}#${h.attempt} for ${ago(h.since)}${h.reason ? ` (${h.reason})` : ""}` : "nobody";
 const out = (data: unknown, text: () => string) => console.log(jsonOut ? JSON.stringify(data, null, 2) : text());
 
@@ -54,6 +54,7 @@ User commands
   task inbox [--project <name>]   open questions and gates waiting on you
   task answer <block-id> "<answer>"
   task approve <id>               approve the gate the task is waiting at
+  task reject <id> "<feedback>"   send the task back from its gate with change requests
   task retry <id> [--fresh]       retry a failed task (fresh = new session)
   task cancel <id>
   task close <id> --superseded-by <other>
@@ -135,7 +136,9 @@ async function taskMain(): Promise<void> {
         const t = d.task;
         const lines = [
           `${t.id} [${t.kind}] ${t.title}`,
-          `status: ${t.status}   project: ${t.project}   step: ${t.current_step ?? "-"}   qa cycles: ${t.qa_cycles}`,
+          `status: ${t.status}   project: ${t.project}   step: ${t.current_step ?? "-"}   qa cycles: ${t.qa_cycles}   plan cycles: ${t.plan_cycles ?? 0}`,
+          t.status === "gate" && t.gate_label ? `gate: ${t.gate_label}` : "",
+          t.rejection ? `rejected at ${JSON.parse(t.rejection).gate}, revising: ${JSON.parse(t.rejection).feedback}` : "",
           t.superseded_by ? `superseded by: ${t.superseded_by}` : "",
           t.worktree ? `worktree: ${t.worktree} (${t.branch})` : "",
           t.ticket ? `ticket: ${t.ticket}` : "",
@@ -194,10 +197,12 @@ async function taskMain(): Promise<void> {
       const scope = project ? `project=${encodeURIComponent(project)}` : "";
       const blocks: any[] = await client.get(`/blocks${scope && `?${scope}`}`);
       const gates: any[] = await client.get(`/tasks?status=gate${scope && `&${scope}`}`);
-      out({ blocks, gates }, () => {
+      const revising: any[] = (await client.get(`/tasks${scope && `?${scope}`}`)).filter((t: any) => t.rejection);
+      out({ blocks, gates, revising }, () => {
         const lines: string[] = [];
         if (blocks.length) { lines.push("questions:"); for (const b of blocks) lines.push(`  [${b.id}] ${b.task_id} (${b.task?.title}) ${ago(b.created_at)} ago\n      ${b.question.replace(/\n/g, "\n      ")}`); }
-        if (gates.length) { lines.push("gates:"); for (const g of gates) lines.push(`  ${g.id} ${g.title} — waiting at ${g.current_step}: task approve ${g.id}`); }
+        if (gates.length) { lines.push("gates:"); for (const g of gates) lines.push(`  ${g.id} ${g.title} waiting at ${g.current_step}${g.gate_label ? ` (${g.gate_label})` : ""}: task approve ${g.id} | task reject ${g.id} "<feedback>"`); }
+        if (revising.length) { lines.push("revising:"); for (const t of revising) lines.push(`  ${t.id} ${t.title} — rejected at ${JSON.parse(t.rejection).gate}, revising ${t.current_step ?? "-"}`); }
         return lines.length ? lines.join("\n") : "inbox empty";
       });
       return;
@@ -209,6 +214,12 @@ async function taskMain(): Promise<void> {
       return;
     }
     case "approve": { const id = rest[0] ?? die("task id required"); const r = await client.post(`/tasks/${id}/approve`, {}); out(r, () => `approved ${r.gate}`); return; }
+    case "reject": {
+      const id = rest[0] ?? die("task id required"); const feedback = rest.slice(1).join(" ") || die('usage: task reject <id> "<feedback>"');
+      const r = await client.post(`/tasks/${id}/reject`, { feedback });
+      out(r, () => `rejected at ${r.gate}; revising ${r.step}`);
+      return;
+    }
     case "retry": { const id = rest[0] ?? die("task id required"); const r = await client.post(`/tasks/${id}/retry`, { fresh: flag("fresh") }); out(r, () => `retrying at ${r.step}`); return; }
     case "cancel": { const id = rest[0] ?? die("task id required"); await client.post(`/tasks/${id}/cancel`, {}); console.log("cancelled"); return; }
     case "close": {
@@ -357,7 +368,8 @@ async function foremanMain(): Promise<void> {
             const running = d.steps.filter((s: any) => s.status === "running").map((s: any) => `${s.name} ${ago(s.started_at)}`).join(", ");
             lines.push(`${t.id} ${pad(t.status, 8)} ${pad(t.project, 14)} ${pad(t.current_step ?? "", 14)} $${t.cost_usd.toFixed(2)}  ${t.title}${running ? `  [${running}]` : ""}`);
             for (const b of d.blocks) lines.push(`      ? [${b.id}] ${b.question.split("\n")[0]}`);
-            if (t.status === "gate") lines.push(`      ! waiting for approval at ${t.current_step}`);
+            if (t.status === "gate") lines.push(`      ! waiting for approval at ${t.current_step}${t.gate_label ? ` (${t.gate_label})` : ""}`);
+            if (t.rejection) lines.push(`      ~ rejected at ${JSON.parse(t.rejection).gate}, revising ${t.current_step ?? "-"}`);
             const notes = d.events.filter((e: any) => e.type === "note").slice(-2);
             for (const e of notes) lines.push(`      ${e.ts.slice(11, 16)} ${JSON.parse(e.data).text.split("\n")[0].slice(0, 110)}`);
           }

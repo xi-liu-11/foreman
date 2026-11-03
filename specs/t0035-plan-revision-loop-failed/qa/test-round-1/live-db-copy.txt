@@ -1,0 +1,49 @@
+old columns: id,project,kind,title,brief,status,pipeline,current_step,priority,branch,worktree,feature_dir,ticket,qa_cycles,result,created_at,updated_at,pr_url,superseded_by
+open #1: 34 tasks, unchanged=true, plan_cycles all 0=true, rejection all null=true, steps unchanged=true
+open #2: 34 tasks, unchanged=true, plan_cycles all 0=true, rejection all null=true, steps unchanged=true
+
+== GET /tasks/T0034 (task show) ==
+status: gate step: plan_approved plan_cycles: 0
+gate_label: Approve the plan — plan QA still fails after 1 review(s); see specs/041-bulk-photo-import-review/qa/plan-review.md
+steps: specify#1:blocked specify#2:done plan#1:done plan_qa#1:done plan_approved#1:gate
+
+== POST /tasks/T0034/reject == 200 {"ok":true,"gate":"plan_approved","step":"plan"}
+after: status queued step plan rejection {"gate":"plan_approved","target":"plan","feedback":"QA test: please address the plan-review findings","at":"2026-11-03T04:40:54.034Z"}
+steps: specify#1:blocked specify#2:done plan#1:done plan_qa#1:skipped plan_approved#1:skipped plan#2:queued
+
+== plan#2 QA_FEEDBACK ==
+
+
+The user sent this back with feedback. Address it, and any review findings below, before anything else:
+
+### The user rejected this at plan_approved
+QA test: please address the plan-review findings
+
+### plan_qa (fail)
+The plan review for 041 bulk photo import is done, and the verdict is FAIL. I ran the speckit-analyze passes by hand over spec, plan, research, data-model, contracts, quickstart and tasks, checked the plan against constitution v2.3.0, and spot-checked the plan's code claims against the branch (useCamera, photoStorage, createCatch, migrate, e2ePhoto, recognizer, the conditions lookup, HomeScreen, CatchDetailScreen, the Worker's rate limits). The report is at specs/041-bulk-photo-import-review/qa/plan-review.md. The checklists got QA additions: CHK043–CHK049 in import-review.md, and a note in requirements.md. Committed as 7975f13.
+
+No CRITICAL constitution conflicts. All seven principles pass for this feature. The app has no high-contrast mode at all, which predates this feature (LOW, D1). Coverage: 48 of 50 functional requirements fully covered, 2 partly (FR-033 place naming, FR-053 discarding a stored suggestion). 7 of 8 success criteria covered (SC-001 has no task). No unmapped tasks.
+
+Why it fails:
+- **HIGH, C1:** the already-in-log check (sort step 1) runs before step 2 fills in Android asset ids (gallery index) and recovers Android GPS (the picker redacts it). Rows saved by an earlier Android import carry ids, and the fallback ignores rows with ids. So on Android a second import of the same album finds no match and every catch is imported twice. This breaks SC-003 and the brief's "pick the same album twice imports nothing". The GPS fallback key is dead on Android for the same reason.
+- **MEDIUM:**
+  - C2: the plan doesn't say how the E2E manifest and real-log index entries become picker `exif`, or what time format the manifest uses.
+  - C3: a `timeout` pauses the AI queue as offline, and it only resumes on a network-change event, so it can stall while the phone stays online.
+  - C4: a fetched suggestion isn't cleared when the catch gets a species some other way, or is deleted, so the "AI ready" badge stays.
+  - C5: SC-006 says every imported catch is in a session, but undated catches get none.
+  - C6: FR-033 promises place naming like any new catch, but the plan only copies the trip's name to catches within 0.5 km of the trip's anchor point, and nothing names them later. It also doesn't say what saving does while a trip's name is still pending.
+  - C7: the picker's temporary copies of saved photos are never deleted, which could leave several GB in the cache.
+  - C8: which catches the banner's AI action queues, and what a second import does to a running queue, are unsettled.
+  - C9: library asset ids differ per device, so after a restore on a new phone a re-import doubles up. This should be listed as a limit, or the time + file size fallback widened.
+- **LOW:** 7 items, including stale task references in research (T060, T046) and an interrupted import creating a second session for the rest of a trip.
+To fix (plan, research and tasks edits only; no code exists yet), see the "What must change" list in qa/plan-review.md:
+1. C1: resolve Android ids (index + resolveAssetId) and GPS (recoverGps) before or as part of alreadyInLog. Update R3, T018 and the sort contract, and add sort.test.ts cases for an Android pick with a null id and for a pick with redacted GPS.
+2. C2: give the manifest's takenAt format, and say how e2eImportSet synthesises exif.
+3. C3: retry `timeout` with a backoff instead of the network-event-only offline pause.
+4. C4: prune stored suggestions on read when the catch has a species or is gone.
+5. C5 and C6: reword SC-006. Narrow FR-033 or add naming after import, and say how save handles trips whose name is still pending.
+6. C7: delete all picker temp files after a successful import.
+7. C8: banner action = needSpecies(importedCatchIds()); a new start while a queue runs appends.
+8. C9: list the new-phone limit, or allow the time + size fallback against rows whose id doesn't match.
+None of these needs a user decision; each has a sensible default.
+Full review: specs/041-bulk-photo-import-review/qa/plan-review.md

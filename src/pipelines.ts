@@ -1,9 +1,11 @@
 // Pipeline templates. A pipeline is a list of named steps. The scheduler walks
 // it in order; "parallel" groups run their children together; "gate" steps
 // wait for `task approve`; "system" steps are run by the scheduler itself.
+// Agent steps with on_fail (plan_qa) loop back like QA groups: a "fail" verdict
+// re-queues the on_fail step with the findings, up to max_cycles_key reviews.
 // No LLM decides routing: the task kind (and whether the project uses Spec Kit) does.
 export type PipelineStep =
-  | { type: "agent"; name: string; role: string; prompt: string }
+  | { type: "agent"; name: string; role: string; prompt: string; on_fail?: string; max_cycles_key?: "max_plan_cycles" }
   | { type: "gate"; name: string; label: string }
   | { type: "parallel"; name: string; children: { name: string; role: string; prompt: string }[]; on_fail: string; max_cycles_key: "max_qa_cycles" }
   | { type: "system"; name: string; action: "open_pr" | "merge" | "merge_direct" };
@@ -72,7 +74,7 @@ export const PIPELINES: Record<string, Pipeline> = {
     steps: [
       { type: "agent", name: "specify", role: "architect", prompt: "specify" },
       { type: "agent", name: "plan", role: "architect", prompt: "plan" },
-      { type: "agent", name: "plan_qa", role: "qa-reviewer", prompt: "plan_qa" },
+      { type: "agent", name: "plan_qa", role: "qa-reviewer", prompt: "plan_qa", on_fail: "plan", max_cycles_key: "max_plan_cycles" },
       { type: "gate", name: "plan_approved", label: "Approve the plan" },
       { type: "agent", name: "implement", role: "developer", prompt: "implement" },
       ...QA_AND_PR,

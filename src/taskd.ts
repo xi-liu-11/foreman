@@ -35,7 +35,9 @@ function project(task: TaskRow): ProjectConfig {
   if (!p) throw new Error(`project '${task.project}' is no longer in config.toml`);
   return p;
 }
-const pipelineSteps = (task: TaskRow) => JSON.parse(task.pipeline) as PipelineStep[];
+// Pipelines stored before T0035 have plan_qa without on_fail; read them as the loop.
+const pipelineSteps = (task: TaskRow) => (JSON.parse(task.pipeline) as PipelineStep[]).map(s =>
+  s.type === "agent" && s.name === "plan_qa" && !s.on_fail ? { ...s, on_fail: "plan", max_cycles_key: "max_plan_cycles" as const } : s);
 const agentDefs = (steps: PipelineStep[]) => steps.flatMap(p => p.type === "parallel" ? p.children : p.type === "agent" ? [p] : []);
 const runDirFor = (task: TaskRow, step: StepRow) => join(RUNS_DIR, task.id, `${step.name}-${step.attempt}`);
 // R2: only the current running attempt of an active task may heartbeat or take resource leases.
@@ -119,7 +121,7 @@ async function expireLeases(): Promise<void> {
   }
 }
 
-async function tick(): Promise<void> {
+export async function tick(): Promise<void> {
   if (ticking) return;
   ticking = true;
   try {
@@ -151,20 +153,23 @@ async function advance(task: TaskRow): Promise<void> {
 
   if (ps.type === "agent") {
     const latest = store.latestStep(task.id, ps.name);
-    if (!latest) return createStep(task, ps.name, ps.role, 1);
-    return settle(task, latest, ps.role, next);
+    // A 'skipped' row was sent back by a review loop or a reject; run a fresh attempt.
+    if (!latest || latest.status === "skipped") return createStep(task, ps.name, ps.role, (latest?.attempt ?? 0) + 1);
+    return settle(task, latest, ps.role, ps.on_fail ? () => reviewed(task, ps, latest, steps, next) : next);
   }
 
   if (ps.type === "gate") {
     const latest = store.latestStep(task.id, ps.name);
     if (latest?.status === "done") return next();
-    if (!latest) {
+    // A 'skipped' gate row was rejected; the revised work needs a fresh approval.
+    if (!latest || latest.status === "skipped") {
+      const label = gateLabel(task, ps);
       tx(() => {
-        store.insertStep({ task_id: task.id, name: ps.name, role: "user", status: "gate", attempt: 1 });
-        store.updateTask(task.id, { status: "gate" });
-        store.event("task.gate", { gate: ps.name, label: ps.label }, task.id);
+        store.insertStep({ task_id: task.id, name: ps.name, role: "user", status: "gate", attempt: (latest?.attempt ?? 0) + 1 });
+        store.updateTask(task.id, { status: "gate", rejection: null });
+        store.event("task.gate", { gate: ps.name, label }, task.id);
       });
-      await herdr.notify(`${task.id} needs approval`, `${ps.label}: ${task.title}`, "request");
+      await herdr.notify(`${task.id} needs approval`, `${label}: ${task.title}`, "request");
     }
     return;
   }
@@ -203,6 +208,7 @@ async function advance(task: TaskRow): Promise<void> {
 
   if (ps.type === "system") {
     const latest = store.latestStep(task.id, ps.name);
+    // A 'skipped' row (reject at a later gate) falls through to a fresh run below.
     if (latest?.status === "done") return next();
     if (latest?.status === "running") return;
     if (latest?.status === "failed" && failureCount(task.id, ps.name) >= cfg.defaults.max_attempts) {
@@ -210,6 +216,63 @@ async function advance(task: TaskRow): Promise<void> {
     }
     return runSystem(task, ps, (latest?.attempt ?? 0) + 1);
   }
+}
+
+// A done review step with on_fail (plan_qa). A "fail" sends the target back with
+// the findings (QA_FEEDBACK in the context endpoint) until max_cycles_key reviews
+// have run; then the task moves on to the gate, whose label carries the warning.
+// A "fail" never fails the task and never counts against max_attempts.
+async function reviewed(task: TaskRow, ps: Extract<PipelineStep, { type: "agent" }>, latest: StepRow, steps: PipelineStep[], next: () => Promise<void>): Promise<void> {
+  const r = latest.result ? JSON.parse(latest.result) : {};
+  if (r.verdict !== "fail") return next();
+  const cycle = task.plan_cycles + 1;
+  const revising = cycle < cfg.defaults[ps.max_cycles_key ?? "max_plan_cycles"];
+  const summary = String(r.summary ?? "");
+  if (!revising) {
+    // Emitted once: next() moves current_step to the gate in this same pass.
+    store.event("task.plan_qa_fail", { cycle, revising: false, summary }, task.id, latest.id);
+    return next();
+  }
+  const target = steps.find(s => s.name === ps.on_fail);
+  if (!target || target.type !== "agent") return failTask(task, `on_fail target '${ps.on_fail}' is not an agent step`);
+  const prev = store.latestStep(task.id, target.name);
+  tx(() => {
+    store.event("task.plan_qa_fail", { cycle, revising: true, summary }, task.id, latest.id);
+    store.updateTask(task.id, { plan_cycles: cycle, current_step: target.name, status: "queued" });
+    store.insertStep({ task_id: task.id, name: target.name, role: target.role, status: "queued", attempt: (prev?.attempt ?? 0) + 1 });
+    store.updateStep(latest.id, { status: "skipped" });
+  });
+  return advance(store.getTask(task.id)!);
+}
+
+// The gate's label, plus a warning when the review before it (plan_qa) still fails.
+function gateLabel(task: TaskRow, gate?: PipelineStep): string {
+  const steps = pipelineSteps(task);
+  const ps = gate ?? steps.find(s => s.name === task.current_step);
+  if (!ps || ps.type !== "gate") return "";
+  for (let i = steps.findIndex(s => s.name === ps.name) - 1; i >= 0; i--) {
+    const s = steps[i];
+    if (s.type === "gate") break;
+    if (s.type !== "agent" || !s.on_fail) continue;
+    const rows = store.stepsForTask(task.id).filter(x => x.name === s.name && x.result);
+    const last = rows[rows.length - 1];
+    if (!last || JSON.parse(last.result!).verdict !== "fail") break;
+    return `${ps.label} — plan QA still fails after ${rows.length} review(s); see ${task.feature_dir ?? "specs/<feature>"}/qa/plan-review.md`;
+  }
+  return ps.label;
+}
+
+// The step a reject at the gate at gateIdx sends work back to: the on_fail target
+// of the nearest review before the gate, else the nearest agent step.
+function rejectTarget(steps: PipelineStep[], gateIdx: number): { target: string; via: PipelineStep } | null {
+  let fallback: PipelineStep | null = null;
+  for (let i = gateIdx - 1; i >= 0; i--) {
+    const s = steps[i];
+    if (s.type === "gate") break;
+    if ((s.type === "agent" || s.type === "parallel") && s.on_fail) return { target: s.on_fail, via: s };
+    if (s.type === "agent" && !fallback) fallback = s;
+  }
+  return fallback ? { target: fallback.name, via: fallback } : null;
 }
 
 // System steps run inside taskd: push and open the PR, or merge it.
@@ -469,24 +532,43 @@ async function stepContext(step: StepRow) {
   const promptFile = join(REPO_ROOT, "prompts", `${promptName}.md`);
   const step_prompt = existsSync(promptFile) ? readFileSync(promptFile, "utf8") : "";
 
+  // QA_FEEDBACK: a pending user rejection, then the findings of the reviews that send work back to this step.
   let qaFeedback = "";
-  const qaGroup = ps.find(p => p.type === "parallel" && p.on_fail === step.name) as any;
-  if (qaGroup && task.qa_cycles > 0) {
-    const parts = qaGroup.children.map((c: any) => {
-      const rows = store.stepsForTask(task.id).filter(s => s.name === c.name && s.result);
-      const last = rows[rows.length - 1];
-      const r = last?.result ? JSON.parse(last.result) : null;
-      return r ? `### ${c.name} (${r.verdict})\n${r.summary}\n${r.notes_for_next ?? ""}` : "";
-    }).filter(Boolean);
-    if (parts.length) qaFeedback = `\n\nThis is QA cycle ${task.qa_cycles}. Address the following QA findings before anything else:\n\n${parts.join("\n\n")}`;
+  const parts: string[] = [];
+  let header = "";
+  const rejection = task.rejection ? JSON.parse(task.rejection) as { gate: string; target: string; feedback: string } : null;
+  if (rejection && rejection.target === step.name) {
+    parts.push(`### The user rejected this at ${rejection.gate}\n${rejection.feedback}`);
+    header = "The user sent this back with feedback. Address it, and any review findings below, before anything else:";
   }
+  const lastResult = (name: string) => {
+    const rows = store.stepsForTask(task.id).filter(s => s.name === name && s.result);
+    const last = rows[rows.length - 1];
+    return last?.result ? JSON.parse(last.result) : null;
+  };
+  for (const reviewer of ps.filter(p => (p.type === "parallel" || p.type === "agent") && p.on_fail === step.name)) {
+    if (reviewer.type === "parallel" && task.qa_cycles > 0) {
+      const found = reviewer.children.map(c => {
+        const r = lastResult(c.name);
+        return r ? `### ${c.name} (${r.verdict})\n${r.summary}\n${r.notes_for_next ?? ""}` : "";
+      }).filter(Boolean);
+      if (found.length) { parts.push(...found); header ||= `This is QA cycle ${task.qa_cycles}. Address the following QA findings before anything else:`; }
+    } else if (reviewer.type === "agent") {
+      const r = lastResult(reviewer.name);
+      if (r?.verdict === "fail") {
+        parts.push(`### ${reviewer.name} (fail)\n${r.summary}\n${r.notes_for_next ?? ""}\nFull review: ${task.feature_dir ?? "specs/<feature>"}/qa/plan-review.md`);
+        header ||= `This is plan revision ${task.plan_cycles}. Address the following plan QA findings before anything else:`;
+      }
+    }
+  }
+  if (parts.length) qaFeedback = `\n\n${header}\n\n${parts.join("\n\n")}`;
 
   const prompt_vars: Record<string, string> = {
     TASK_ID: task.id, TASK_TITLE: task.title, STEP_NAME: step.name, ATTEMPT: String(step.attempt),
     PROJECT: task.project, CWD: task.worktree ?? proj.path, VERIFY: proj.verify,
     PROJECT_NOTES: proj.notes ? `- Project notes: ${proj.notes}` : "",
     SLUG: slugify(task.title), FEATURE: (task.feature_dir ?? "").replace(/^specs\//, ""), BASE_BRANCH: proj.base_branch,
-    QA_CYCLE: String(task.qa_cycles + 1), QA_FEEDBACK: qaFeedback,
+    QA_CYCLE: String(task.qa_cycles + 1), QA_FEEDBACK: qaFeedback, PLAN_CYCLE: String(task.plan_cycles + 1),
     DEVICE_LEASES: devicePrompt(deviceResources(proj), step.role),
     TICKET: ticket, TICKET_REF: task.ticket ?? "",
     TICKET_HANDOFF: task.ticket
@@ -517,7 +599,7 @@ export async function route(req: Request): Promise<Response> {
   if (p === "/tasks" && req.method === "GET") {
     const status = url.searchParams.get("status")?.split(",").filter(Boolean);
     const tasks = store.listTasks({ status, project: url.searchParams.get("project") ?? undefined, all: url.searchParams.get("all") === "1" });
-    return json(tasks.map(t => ({ ...t, open_blocks: store.openBlocks(t.id).length, cost_usd: store.stepsForTask(t.id).reduce((a, s) => a + s.cost_usd, 0) })));
+    return json(tasks.map(t => ({ ...t, gate_label: t.status === "gate" ? gateLabel(t) : null, open_blocks: store.openBlocks(t.id).length, cost_usd: store.stepsForTask(t.id).reduce((a, s) => a + s.cost_usd, 0) })));
   }
   if (p === "/tasks" && req.method === "POST") {
     const { project: projName, kind, priority, ticket, branch: existingBranch, start_at, continues } = body;
@@ -613,9 +695,9 @@ export async function route(req: Request): Promise<Response> {
   }
   if ((mm = m(/^\/tasks\/([^/]+)$/)) && req.method === "GET") {
     const task = store.getTask(mm[1]); if (!task) return bad("no such task", 404);
-    return json({ task, steps: store.stepsForTask(task.id), blocks: store.openBlocks(task.id), artifacts: store.artifactsForTask(task.id), leases: store.leasesForTask(task.id).map(r => leaseView(store, r)), events: store.eventsForTask(task.id, 50).reverse() });
+    return json({ task: { ...task, gate_label: task.status === "gate" ? gateLabel(task) : null }, steps: store.stepsForTask(task.id), blocks: store.openBlocks(task.id), artifacts: store.artifactsForTask(task.id), leases: store.leasesForTask(task.id).map(r => leaseView(store, r)), events: store.eventsForTask(task.id, 50).reverse() });
   }
-  if ((mm = m(/^\/tasks\/([^/]+)\/(cancel|close|approve|retry|note|artifacts|blocks)$/)) && req.method === "POST") {
+  if ((mm = m(/^\/tasks\/([^/]+)\/(cancel|close|approve|reject|retry|note|artifacts|blocks)$/)) && req.method === "POST") {
     const task = store.getTask(mm[1]); if (!task) return bad("no such task", 404);
     const action = mm[2];
     if (action === "cancel") {
@@ -651,6 +733,39 @@ export async function route(req: Request): Promise<Response> {
       });
       setTimeout(tick, 50);
       return json({ ok: true, gate: gate.name });
+    }
+    if (action === "reject") {
+      // Send the work before the gate back with the user's feedback (QA_FEEDBACK), then re-run everything up to the gate.
+      if (task.status !== "gate") return bad(`task is ${task.status}, not waiting at a gate`);
+      const gate = store.stepsForTask(task.id).find(s => s.status === "gate"); if (!gate) return bad("no open gate step");
+      const feedback = String(body.feedback ?? "").trim();
+      if (!feedback) return bad("feedback required");
+      const steps = pipelineSteps(task);
+      const gateIdx = steps.findIndex(s => s.name === gate.name);
+      const found = gateIdx >= 0 ? rejectTarget(steps, gateIdx) : null;
+      if (!found) return bad(`nothing before gate '${gate.name}' to send back`);
+      const targetIdx = steps.findIndex(s => s.name === found.target);
+      const target = steps[targetIdx];
+      if (!target || target.type !== "agent") return bad(`reject target '${found.target}' is not an agent step`);
+      tx(() => {
+        store.event("note", { text: `Rejected at ${gate.name}: ${feedback}` }, task.id, gate.id);
+        store.event("task.rejected", { gate: gate.name, target: target.name, feedback }, task.id, gate.id);
+        store.updateStep(gate.id, { status: "skipped", finished_at: now() });
+        const skip = (name: string) => { const s = store.latestStep(task.id, name); if (s && s.status !== "skipped") store.updateStep(s.id, { status: "skipped" }); };
+        for (const s of steps.slice(targetIdx + 1, gateIdx)) {
+          if (s.type === "parallel") s.children.forEach(c => skip(c.name));
+          else if (s.type !== "gate") skip(s.name);
+        }
+        const prev = store.latestStep(task.id, target.name);
+        store.insertStep({ task_id: task.id, name: target.name, role: target.role, status: "queued", attempt: (prev?.attempt ?? 0) + 1 });
+        store.updateTask(task.id, {
+          current_step: target.name, status: "queued",
+          rejection: JSON.stringify({ gate: gate.name, target: target.name, feedback, at: now() }),
+          ...(found.via.type === "parallel" ? { qa_cycles: 0 } : { plan_cycles: 0 }),
+        });
+      });
+      setTimeout(tick, 50);
+      return json({ ok: true, gate: gate.name, step: target.name });
     }
     if (action === "retry") {
       if (task.status !== "failed") return bad(`task is ${task.status}, not failed`);

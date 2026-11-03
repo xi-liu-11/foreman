@@ -1,0 +1,41 @@
+task — Foreman task CLI
+
+User commands
+  task create --project <name> --kind <kind> --title "<t>" [--brief "<text>" | --brief-file <path>] [--priority N] [--ticket <ref>]
+                                  with --ticket, title and brief default to the ticket's
+              [--branch <existing>] [--start-at <step>]
+                                  attach to an existing branch (not checked out anywhere) and/or skip earlier pipeline steps
+              [--continues <id>]
+                                  on success, close <id> as superseded by the new task (use when recovering it on the same branch)
+  task ls [--all] [--project <name>] [--status queued,running,...]
+  task show <id>
+  task log <id> [step] [--attempt N] [--tail N]
+                                  transcript of a step run (--json for raw events)
+  task inbox [--project <name>]   open questions and gates waiting on you
+  task answer <block-id> "<answer>"
+  task approve <id>               approve the gate the task is waiting at
+  task reject <id> "<feedback>"   send the task back from its gate with change requests
+  task retry <id> [--fresh]       retry a failed task (fresh = new session)
+  task cancel <id>
+  task close <id> --superseded-by <other>
+                                  close a failed, cancelled, gate or blocked task whose work continued in <other>
+  task kinds                      list task kinds (pipelines)
+  task projects                   list registered projects
+  task ticket ls --project <name> [--states "Todo,In Progress"]
+  task ticket show <ref> --project <name>
+  task ticket comment <ref> "<body>" --project <name>
+  task ticket transition <ref> "<state>" --project <name>
+  task ticket create --title "<t>" [--body "<text>"] [--parent <ref>] --project <name>
+
+Worker commands (task and step come from FOREMAN_TASK / FOREMAN_STEP)
+  task note "<text>"
+  task block "<question>"
+  task artifact add <path> [--kind <kind>] [--note "<text>"]
+  task ticket show|comment|transition|create ...   (ref defaults to the task's ticket)
+  task show                       current task
+  task lease <resource> [--wait <seconds>] [--reason "<text>"]
+                                  wait for a shared device (ios-sim, android-emu, ...); exit 3 if --wait runs out (place kept)
+  task release <resource>         give a device back (also automatic when the step ends)
+  task leases [--project <name>]  holders and queues of shared devices
+
+Add --json to any command for machine-readable output.

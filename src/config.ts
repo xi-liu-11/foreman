@@ -41,6 +41,7 @@ export interface Defaults {
   step_timeout_min: number;
   max_attempts: number;
   max_qa_cycles: number;
+  max_plan_cycles: number;
   concurrency: number;
   heartbeat_sec: number;
   lease_sec: number;
@@ -86,6 +87,7 @@ const DEFAULTS: Defaults = {
   step_timeout_min: 90,
   max_attempts: 3,
   max_qa_cycles: 3,
+  max_plan_cycles: 2,
   concurrency: 3,
   heartbeat_sec: 30,
   lease_sec: 150,
@@ -117,6 +119,7 @@ max_turns = 200
 step_timeout_min = 90
 max_attempts = 3
 max_qa_cycles = 3
+max_plan_cycles = 2   # plan QA reviews per round before the plan goes to the gate anyway
 concurrency = 3
 heartbeat_sec = 30
 lease_sec = 150

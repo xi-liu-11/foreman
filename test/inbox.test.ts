@@ -137,7 +137,7 @@ test("task inbox --project with nothing open reports an empty inbox", async () =
   expect(text.stdout.trim()).toBe("inbox empty");
   const json = await cli("inbox", "--project", "inbox-test-none", "--json");
   expect(json.code).toBe(0);
-  expect(JSON.parse(json.stdout)).toEqual({ blocks: [], gates: [] });
+  expect(JSON.parse(json.stdout)).toEqual({ blocks: [], gates: [], revising: [] });
 });
 
 test("task inbox without the flag lists both projects", async () => {
