@@ -1,0 +1,18 @@
+device lane
+  task leases shows the lane
+happy path
+  T0001 -> done
+block/answer/resume
+  T0002 -> blocked
+  T0002 -> done
+crash/retry
+  T0003 -> done
+cancel
+  T0004 -> cancelled
+taskd outage longer than the lease mid-step
+  T0005 -> done
+  expected 1 attempt, got 2
+test/smoke.sh: line 61: 18242 Terminated: 15          FAKE_LINEAR_PORT=7779 FAKE_LINEAR_LOG="$T/linear.log" bun "$ROOT/test/fake-linear.ts" >> "$T/linear-server.log" 2>&1
+test/smoke.sh: line 61: 23811 Terminated: 15          FOREMAN_HOME="$T" FOREMAN_CLAUDE_BIN="$ROOT/test/fake-claude.sh" FOREMAN_GH_BIN="$ROOT/test/fake-gh.sh" FOREMAN_LINEAR_URL=http://127.0.0.1:7779 "$ROOT/bin/foreman" taskd >> "$T/taskd.log" 2>&1
+logs: /var/folders/7w/1mrvd9812138hkj9ndncqcvh0000gn/T//foreman-smoke-18148
+exit=1

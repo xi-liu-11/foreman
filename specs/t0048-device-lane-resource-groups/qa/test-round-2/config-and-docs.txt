@@ -1,0 +1,30 @@
+== live config tackle-tally (read-only)
+concurrency = 3       # T0048 device lane: needs the T0048 lane code in taskd (else 1); was 1 (2026-11-04), before that 2
+resource_groups = { devices = { members = ["ios-sim", "android-emu"], capacity = 1 } }   # T0048: one device worker at a time across both (16 GB Mac)
+device_steps = ["implement", "test"]   # T0048: device_steps_running defaults to capacity + 1 = 2
+-rw-r--r--@ 1 xi  staff  4588  4 Nov 22:43 /Users/xi/.foreman/config.toml.bak-t0048
+== docs
+README.md:10
+skills/foreman/SKILL.md:1
+== tackle-tally steps (task ls --all)
+ID     STATUS           PROJECT        KIND           STEP           AGE   COST    Q  TITLE
+T0003  done             tackle-tally   implement                     7d    $22.20     Species list with standard names and anglers' own names (026)
+T0004  done             tackle-tally   implement                     7d    $42.09     Export your log as spreadsheets and photos (027)
+T0005  cancelled        tackle-tally   implement_lite plan           7d    $0.00      Fix Ask your log mic on Android: stop keeps words, restart works (TAC-122)
+T0006  cancelled        tackle-tally   implement_lite implement      7d    $42.07     Keyboard covers the Ask your log input on Android (TAC-123)
+T0007  done             tackle-tally   implement_lite                7d    $11.17     Fix Ask your log mic on Android: stop keeps words, restart works (TAC-122)
+T0008  done             tackle-tally   implement_lite                7d    $10.94     Export: Save to phone fails on Android, stream into the picked folder (TAC-124)
+T0009  done             tackle-tally   implement_lite                7d    $9.22      Bottom safe-area inset on stack screens under Android edge-to-edge (TAC-125)
+T0010  done             tackle-tally   implement_lite                7d    $3.79      Export: add species id and proper-name columns from spec 026 (T035)
+T0012  done             tackle-tally   implement_lite                6d    $3.87      Keyboard covers the Ask your log input on Android: QA and merge of branch 029 (TAC-123)
+T0013  done             tackle-tally   implement_lite                6d    $4.18      Guard test: AskScreen passes insets.bottom to KeyboardAvoider, not padding (post-merge fix)
+T0014  done             tackle-tally   implement                     6d    $9.98      Ask your log: input tap or Send stops the mic
+ID     STATUS    PROJECT        KIND           STEP           AGE   COST    Q  TITLE
+T0037  running   tackle-tally   implement      qa             13h   $155.59    Share photos into Tackle Tally (import via share sheet)
+T0038  queued    tackle-tally   implement      qa             10h   $16.79     Assistant: single Mate voice, characters hidden behind a flag
+T0039  queued    tackle-tally   implement      plan           10h   $7.97      Sessions required: start-time prompt, continue-or-new, auto-end, editable times
+T0040  queued    tackle-tally   implement      plan_qa        10h   $4.23      Quick launch: app icon shortcut and deep link into the camera
+T0042  queued    tackle-tally   design         design         10h   $0.00      Design: AI session debrief with review-and-accept summary
+T0043  queued    tackle-tally   implement      specify        10h   $0.00      Misses: log the fish that got away (no photos)
+T0044  queued    tackle-tally   design         design         9h    $0.00      Design: session location trail (background sampling while a session is active)
+T0046  queued    tackle-tally   implement_lite plan           7h    $0.00      Docs: implement runs only touched flows; full suite in QA test step

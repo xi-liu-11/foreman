@@ -69,7 +69,7 @@ function pipelineSteps(t, steps) {
 }
 
 // Devices: one card per project that declares resources (or browser verify) or has lease rows
-function devices(projects, leases) {
+function devices(projects, leases, lanes) {
   const who = r => `${r.task_id} ${r.step}#${r.attempt}`;
   const cards = projects.map(p => {
     const declared = [...(p.resources ?? []), ...(p.verify === "browser" ? ["browser"] : [])];
@@ -77,7 +77,11 @@ function devices(projects, leases) {
     const keys = new Map(); // "machine\0resource" -> {machine, resource}
     for (const r of declared) keys.set("local\0" + r, { machine: "local", resource: r });
     for (const l of rows) keys.set(l.machine + "\0" + l.resource, { machine: l.machine, resource: l.resource });
-    if (!keys.size) return "";
+    const pl = (lanes?.lanes ?? []).filter(l => l.project === p.name), ps = lanes?.projects?.[p.name];
+    if (!keys.size && !pl.length) return "";
+    const laneHtml = pl.map(l => `<div class="meta">${l.machine && l.machine !== "local" ? esc(l.machine) + " · " : ""}${esc(l.group)} · cap ${l.capacity} · device steps ${ps?.device_running ?? 0}/${ps?.device_steps_running ?? 0}</div>`
+      + l.holders.map(h => `<div class="meta ${h.overdue ? "err" : ""}">${esc(h.task_id)}/${esc(h.step)}#${h.attempt} · ${esc(h.resources.join(", "))} · held ${Math.round(h.held_min)}m${h.expect_min != null ? " / expect " + Math.round(h.expect_min) + "m" : ""}${h.overdue ? " (overdue)" : ""}</div>`).join("")
+      + l.waiters.map(w => `<div class="meta">${w.position}. ${esc(w.task_id)}/${esc(w.step)}#${w.attempt} · ${esc(w.resource)} · eta ~${Math.round(w.eta_min)}m</div>`).join("")).join("");
     const trs = [...keys.values()].map(k => {
       const mine = rows.filter(l => l.machine === k.machine && l.resource === k.resource);
       const held = mine.find(l => l.state === "held");
@@ -85,7 +89,7 @@ function devices(projects, leases) {
       const holder = held ? `<span class="${held.overdue ? "err" : ""}">${esc(who(held))} · ${secs(held.held_sec)}${held.reason ? " · " + esc(held.reason) : ""}${held.overdue ? " (overdue)" : ""}</span>` : `<span class="empty">free</span>`;
       return `<tr><td>${k.machine !== "local" ? `<span class="meta">${esc(k.machine)}</span> ` : ""}${esc(k.resource)}</td><td>${holder}</td><td class="meta">${queue.map(q => esc(who(q))).join(", ")}</td></tr>`;
     }).join("");
-    return `<div class="card"><div class="title">${esc(p.name)}</div><table>${trs}</table></div>`;
+    return `<div class="card"><div class="title">${esc(p.name)}</div>${laneHtml}${trs ? `<table>${trs}</table>` : ""}</div>`;
   }).join("");
   return cards || `<span class="empty">no shared devices</span>`;
 }
@@ -94,7 +98,7 @@ function card(t, d) {
   const steps = d?.steps ?? [];
   const revising = !!t.rejection && ["queued", "running", "blocked"].includes(t.status);
   const notes = (d?.events ?? []).filter(e => e.type === "note" || e.type === "task.qa_fail" || e.type === "task.plan_qa_fail" || e.type === "task.rejected" || e.type === "step.failed" || e.type === "ticket.comment" || e.type === "lease.overdue").slice(-4);
-  const lease = (d?.leases ?? []).map(l => l.state === "held" ? `holds ${esc(l.resource)} ${secs(l.held_sec)}` : `waiting #${l.position} for ${esc(l.resource)}`).join(", ");
+  const lease = (d?.leases ?? []).map(l => l.state === "held" ? `holds ${esc(l.resource)} ${secs(l.held_sec)}${l.expect_min != null ? ` · expect ~${Math.round(l.expect_min)}m` : ""}` : `waiting #${l.position} for ${esc(l.resource)}${l.eta_min != null ? ` · eta ~${Math.round(l.eta_min)}m` : ""}`).join(", ");
   const cur = steps.filter(s => s.status === "running").map(s => `${s.name} for ${dur(s.started_at)}${s.turns ? "" : ""}`).join(", ");
   return `<div class="card">
     <div class="row"><span class="id">${t.id}</span><span class="title">${esc(t.title)}</span><span class="badge ${revising ? "blocked" : t.status}">${revising ? "rejected, revising" : t.status}</span>
@@ -111,8 +115,8 @@ function card(t, d) {
 async function refresh() {
   try {
     const all = await api("/tasks?all=1");
-    const [leases, projects] = await Promise.all([api("/leases"), api("/projects")]);
-    const dev = devices(projects, leases);
+    const [leases, projects, lanes] = await Promise.all([api("/leases"), api("/projects"), api("/lanes")]);
+    const dev = devices(projects, leases, lanes);
     document.getElementById("devices").innerHTML = dev;
     document.getElementById("devices-sec").hidden = dev.startsWith("<span");
     const active = all.filter(t => ["queued", "running", "blocked", "gate"].includes(t.status));

@@ -27,6 +27,8 @@ speckit = true
 path = "$ROOT"
 verify = "inspect"
 concurrency = 1
+resources = ["dev-a", "dev-b"]
+resource_groups = { lane = { members = ["dev-a", "dev-b"], capacity = 1 } }
 [tickets.linear]
 api_key = "lin_api_test"
 [projects.direct]
@@ -67,6 +69,7 @@ export FOREMAN_URL=http://127.0.0.1:7778 FOREMAN_TOKEN=testtoken
 sleep 1.5
 status() { "$ROOT/bin/task" show "$1" --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["task"]["status"])'; }
 wait_for() { i=0; while [ $i -lt 90 ]; do s=$(status "$1"); [ "$s" = "$2" ] && { echo "  $1 -> $s"; return 0; }; i=$((i+1)); sleep 1; done; echo "  $1 expected $2, got $s"; return 1; }
+echo "device lane"; "$ROOT/bin/task" leases | grep -q "smoke local lane (capacity 1" && echo "  task leases shows the lane" || { echo "  no lane in task leases"; exit 1; }
 echo "happy path";          "$ROOT/bin/task" create --project smoke --kind research --title Happy --brief x >/dev/null; wait_for T0001 done
 echo "block/answer/resume"; echo block > "$T/mode"; "$ROOT/bin/task" create --project smoke --kind research --title Blocky --brief x >/dev/null; wait_for T0002 blocked; "$ROOT/bin/task" answer 1 "Blue." >/dev/null; wait_for T0002 done
 echo "crash/retry";         echo fail > "$T/mode";  "$ROOT/bin/task" create --project smoke --kind research --title Faily --brief x >/dev/null; wait_for T0003 done

@@ -203,3 +203,194 @@ test("devicePrompt", () => {
   expect(L.devicePrompt(deviceResources(cfg({ resources: ["ios-sim"] })), "architect")).toBe("");
   expect(L.devicePrompt(deviceResources(cfg({ verify: "tests" })), "test-analyst")).toBe("");
 });
+
+// ---------------------------------------------------------------- T0048 device lane
+
+const DEV = (capacity: number): L.GroupsOf => p => p === "P" ? [{ name: "devices", members: ["ios-sim", "android-emu"], capacity }] : [];
+const greq = (store: InstanceType<typeof Store>, t: TaskRow, s: StepRow, r: string, groupsOf: L.GroupsOf, expect_min: number | null = null) =>
+  L.requestLease(store, t, s, r, null, [], { groupsOf, expect_min });
+function mkTaskQa(store: InstanceType<typeof Store>, qa: number, status: TaskStatus = "running", priority = 0): TaskRow {
+  const t = mkTask(store, "P", status);
+  store.updateTask(t.id, { qa_cycles: qa, priority });
+  return store.getTask(t.id)!;
+}
+
+test("AS-1 capacity 1: a free member waits while the lane is held", () => {
+  const { store } = fresh();
+  const g = DEV(1);
+  const ta = mkTask(store, "P"), tb = mkTask(store, "P");
+  const a = mkStep(store, ta), b = mkStep(store, tb);
+  expect(greq(store, ta, a, "ios-sim", g)).toMatchObject({ granted: true, group: "devices" });
+  expect(greq(store, tb, b, "android-emu", g)).toMatchObject({ granted: false, position: 1, queue: 1, group: "devices" });
+  expect(greq(store, tb, b, "android-emu", g).holder?.task_id).toBe(ta.id);
+  L.releaseLease(store, a, "ios-sim", "released", g);
+  expect(greq(store, tb, b, "android-emu", g).granted).toBe(true);
+  expect(events(store, "lease.granted").at(-1)!.data.group).toBe("devices");
+});
+
+test("AS-2 one slot per step: the holder takes a second member at once", () => {
+  const { store } = fresh();
+  const g = DEV(1);
+  const ta = mkTask(store, "P"), tb = mkTask(store, "P");
+  const a = mkStep(store, ta), b = mkStep(store, tb);
+  greq(store, ta, a, "ios-sim", g);
+  expect(greq(store, tb, b, "ios-sim", g).granted).toBe(false);
+  expect(greq(store, ta, a, "android-emu", g).granted).toBe(true);
+  L.releaseLease(store, a, "ios-sim", "released", g);
+  expect(greq(store, tb, b, "ios-sim", g).granted).toBe(false); // a still holds android-emu
+  L.releaseLease(store, a, "android-emu", "released", g);
+  expect(greq(store, tb, b, "ios-sim", g).granted).toBe(true);
+});
+
+test("AS-3 capacity 2: two holders, the third waits; key exclusivity still applies", () => {
+  const { store } = fresh();
+  const g = DEV(2);
+  const [ta, tb, tc] = [mkTask(store, "P"), mkTask(store, "P"), mkTask(store, "P")];
+  const a = mkStep(store, ta), b = mkStep(store, tb), c = mkStep(store, tc);
+  expect(greq(store, ta, a, "ios-sim", g).granted).toBe(true);
+  expect(greq(store, tb, b, "android-emu", g).granted).toBe(true);
+  expect(greq(store, tc, c, "ios-sim", g)).toMatchObject({ granted: false, position: 1 });
+  L.releaseLease(store, b, "android-emu", "released", g);
+  expect(greq(store, tc, c, "ios-sim", g).granted).toBe(false); // a holds ios-sim
+  L.releaseLease(store, a, "ios-sim", "released", g);
+  expect(greq(store, tc, c, "ios-sim", g).granted).toBe(true);
+});
+
+test("AS-4 capacity 2: two steps never hold the same resource", () => {
+  const { store } = fresh();
+  const g = DEV(2);
+  const steps = [0, 1, 2, 3].map(() => { const t = mkTask(store, "P"); return { t, s: mkStep(store, t) }; });
+  for (const { t, s } of steps) greq(store, t, s, "ios-sim", g);
+  L.reconcileLeases(store, () => 45, g);
+  expect(store.listLeases().filter(r => r.granted_at)).toHaveLength(1);
+});
+
+test("AS-5 grant order through the store, with positions", () => {
+  const { store } = fresh();
+  const g = DEV(1);
+  const th = mkTaskQa(store, 0); const h = mkStep(store, th, { name: "implement" });
+  greq(store, th, h, "ios-sim", g);
+  const mk = (qa: number, name: string) => { const t = mkTaskQa(store, qa); return { t, s: mkStep(store, t, { name }) }; };
+  const w = [mk(0, "implement"), mk(0, "test"), mk(2, "implement"), mk(1, "test")];
+  for (const x of w) greq(store, x.t, x.s, "ios-sim", g);
+  const pos = (i: number) => greq(store, w[i]!.t, w[i]!.s, "ios-sim", g).position;
+  expect([pos(3), pos(1), pos(2), pos(0)]).toEqual([1, 2, 3, 4]);
+  const leaseRow = store.leasesForStep(w[1]!.s.id)[0]!;
+  expect(L.leaseView(store, leaseRow, g).position).toBe(2);
+  const order: number[] = [];
+  let holder = h;
+  for (let k = 0; k < 4; k++) {
+    L.releaseLease(store, holder, "ios-sim", "released", g);
+    const i = w.findIndex(x => store.leasesForStep(x.s.id)[0]?.granted_at);
+    order.push(i); holder = w[i]!.s;
+  }
+  expect(order).toEqual([3, 1, 2, 0]);
+});
+
+test("AS-11 expect_min: stored, updated, drives overdue and ETA", () => {
+  const { store } = fresh();
+  const g = DEV(1);
+  const ta = mkTask(store, "P"), tb = mkTask(store, "P");
+  const a = mkStep(store, ta), b = mkStep(store, tb);
+  expect(greq(store, ta, a, "ios-sim", g, 25)).toMatchObject({ granted: true, expect_min: 25, expect_left_min: 25 });
+  expect(store.leasesForStep(a.id)[0]!.expect_min).toBe(25);
+  const wb = greq(store, tb, b, "android-emu", g, 10);
+  expect(wb.eta_min).toBe(25);
+  // Held 30 min: overdue at the expect (25), not the fallback (45).
+  store.db.run("UPDATE resource_leases SET granted_at = ? WHERE step_id = ?", [new Date(Date.now() - 30 * 60_000).toISOString(), a.id]);
+  L.reconcileLeases(store, () => 45, g);
+  const ev = events(store, "lease.overdue");
+  expect(ev).toHaveLength(1);
+  expect(ev[0].data).toMatchObject({ max_min: 25, expected: true });
+  expect(greq(store, tb, b, "android-emu", g).eta_min).toBe(0);
+  // A new expect clears overdue_at and re-arms the check.
+  greq(store, ta, a, "ios-sim", g, 60);
+  const row = store.leasesForStep(a.id)[0]!;
+  expect([row.expect_min, row.overdue_at]).toEqual([60, null]);
+  L.reconcileLeases(store, () => 45, g);
+  expect(events(store, "lease.overdue")).toHaveLength(1);
+  expect(L.leaseView(store, store.leasesForStep(b.id)[0]!, g).eta_min).toBe(30);
+});
+
+test("AS-11 overdue falls back to lease_max_minutes without an expect", () => {
+  const { store } = fresh();
+  const t = mkTask(store, "P");
+  const a = mkStep(store, t);
+  greq(store, t, a, "ios-sim", DEV(1));
+  store.db.run("UPDATE resource_leases SET granted_at = ? WHERE step_id = ?", [new Date(Date.now() - 30 * 60_000).toISOString(), a.id]);
+  L.reconcileLeases(store, () => 45, DEV(1));
+  expect(events(store, "lease.overdue")).toHaveLength(0);
+  L.reconcileLeases(store, () => 20, DEV(1));
+  expect(events(store, "lease.overdue")[0].data).toMatchObject({ max_min: 20, expected: false });
+});
+
+test("AS-13 an old-schema database opens and its lease rows load unchanged", () => {
+  const { Database } = require("bun:sqlite");
+  const path = join(mkdtempSync(join(tmpdir(), "fm-oldlease-")), "old.db");
+  const db = new Database(path, { create: true });
+  db.exec(`CREATE TABLE tasks (id TEXT PRIMARY KEY, project TEXT NOT NULL, kind TEXT NOT NULL, title TEXT NOT NULL, brief TEXT NOT NULL, status TEXT NOT NULL, pipeline TEXT NOT NULL, current_step TEXT, priority INTEGER NOT NULL DEFAULT 5, branch TEXT, worktree TEXT, feature_dir TEXT, ticket TEXT, qa_cycles INTEGER NOT NULL DEFAULT 0, result TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+    CREATE TABLE steps (id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL REFERENCES tasks(id), name TEXT NOT NULL, role TEXT NOT NULL, status TEXT NOT NULL, attempt INTEGER NOT NULL DEFAULT 0, session_id TEXT, resume_prompt TEXT, workspace_id TEXT, tab_id TEXT, pane_id TEXT, machine TEXT, started_at TEXT, finished_at TEXT, lease_until TEXT, result TEXT, error TEXT, cost_usd REAL NOT NULL DEFAULT 0, turns INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);
+    CREATE TABLE resource_leases (id INTEGER PRIMARY KEY AUTOINCREMENT, project TEXT NOT NULL, machine TEXT NOT NULL, resource TEXT NOT NULL, task_id TEXT NOT NULL REFERENCES tasks(id), step_id INTEGER NOT NULL REFERENCES steps(id), reason TEXT, requested_at TEXT NOT NULL, granted_at TEXT, overdue_at TEXT, UNIQUE (project, machine, resource, step_id));
+    INSERT INTO tasks VALUES ('T0001','P','feature','t','b','running','[]',NULL,5,NULL,NULL,NULL,NULL,0,NULL,'2026-11-01T00:00:00Z','2026-11-01T00:00:00Z');
+    INSERT INTO steps (task_id, name, role, status, attempt, created_at) VALUES ('T0001','implement','developer','running',1,'2026-11-01T00:00:00Z');
+    INSERT INTO resource_leases (project, machine, resource, task_id, step_id, reason, requested_at, granted_at) VALUES ('P','local','ios-sim','T0001',1,'flows','2026-11-01T00:01:00Z','2026-11-01T00:02:00Z');`);
+  db.close();
+  const s = new Store(path);
+  expect(s.listLeases()).toEqual([{ id: 1, project: "P", machine: "local", resource: "ios-sim", task_id: "T0001", step_id: 1, reason: "flows", requested_at: "2026-11-01T00:01:00Z", granted_at: "2026-11-01T00:02:00Z", overdue_at: null, expect_min: null }]);
+  expect(L.leaseView(s, s.listLeases()[0]!, DEV(1))).toMatchObject({ state: "held", group: "devices", expect_min: null });
+});
+
+test("dispatchView: device-running count, laneBusy, stale queued rows excluded", () => {
+  const { store } = fresh();
+  const g = DEV(1);
+  const proj = { device_steps: ["implement", "test"], device_steps_running: 2, resource_groups: g("P") };
+  const ta = mkTask(store, "P"), tb = mkTask(store, "P");
+  const a = mkStep(store, ta, { name: "implement" }), b = mkStep(store, tb, { name: "test" });
+  mkStep(store, ta, { name: "plan" });
+  const gated = mkTask(store, "P", "gate");
+  mkStep(store, gated, { name: "test", status: "queued" });
+  const tq = mkTaskQa(store, 1, "queued", 3);
+  const q = mkStep(store, tq, { name: "test", status: "queued" });
+  let v = L.dispatchView(store, "P", proj, 1);
+  expect(v).toMatchObject({ freeSlots: 1, deviceRunning: 2, deviceLimit: 2, laneBusy: false, deviceSteps: ["implement", "test"] });
+  expect(v.queued.map(c => c.step_id)).toEqual([q.id]);
+  expect(v.queued[0]).toMatchObject({ name: "test", priority: 3, qa_cycles: 1, task_id: tq.id });
+  greq(store, ta, a, "ios-sim", g);
+  expect(L.dispatchView(store, "P", proj, 1).laneBusy).toBe(false);
+  greq(store, tb, b, "android-emu", g);
+  expect(L.dispatchView(store, "P", proj, 1).laneBusy).toBe(true);
+  expect(L.dispatchView(store, "P", { ...proj, resource_groups: [] }, 1).laneBusy).toBe(false);
+});
+
+test("laneViews and laneStatusForTask", () => {
+  const { store } = fresh();
+  const g = DEV(1);
+  expect(L.laneViews(store, g, ["P", "Q"])).toEqual([{ project: "P", machine: "local", group: "devices", capacity: 1, members: ["ios-sim", "android-emu"], holders: [], waiters: [] }]);
+  const ta = mkTask(store, "P"), tb = mkTask(store, "P");
+  const a = mkStep(store, ta, { name: "implement" }), b = mkStep(store, tb, { name: "test" });
+  greq(store, ta, a, "ios-sim", g, 20); greq(store, ta, a, "android-emu", g);
+  greq(store, tb, b, "ios-sim", g, 15);
+  const [lane] = L.laneViews(store, g, ["P"], () => 45);
+  expect(lane!.holders).toHaveLength(1);
+  expect(lane!.holders[0]).toMatchObject({ task_id: ta.id, step: "implement", resources: ["ios-sim", "android-emu"], expect_min: 20, expect_left_min: 20, overdue: false });
+  expect(lane!.waiters).toEqual([expect.objectContaining({ task_id: tb.id, step: "test", resource: "ios-sim", position: 1, expect_min: 15, eta_min: 20 })]);
+  expect(L.laneStatusForTask(store, tb.id, g)).toEqual({ position: 1, of: 1 });
+  expect(L.laneStatusForTask(store, ta.id, g)).toBeNull();
+});
+
+test("devicePrompt: lane guidance", () => {
+  const plain = L.devicePrompt(["android-emu", "ios-sim"], "developer");
+  const grouped = L.devicePrompt(["android-emu", "ios-sim"], "developer", [{ name: "devices", members: ["android-emu", "ios-sim"], capacity: 1 }]);
+  for (const p of [plain, grouped]) {
+    const low = p.toLowerCase();
+    expect(p).toContain("--expect");
+    expect(p).toContain("--wait 540");
+    expect(p).toContain("code 3");
+    expect(low).toContain("alphabetical");
+    expect(low).toContain("shut it down");
+    expect(low).toContain("never kill");
+  }
+  expect(plain).not.toContain("device lane with capacity");
+  expect(grouped).toContain("`android-emu` and `ios-sim` form one device lane with capacity 1");
+  expect(L.devicePrompt(["ios-sim"], "architect", [{ name: "d", members: ["ios-sim"], capacity: 1 }])).toBe("");
+});

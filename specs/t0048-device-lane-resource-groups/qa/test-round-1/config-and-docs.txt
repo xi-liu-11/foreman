@@ -1,0 +1,36 @@
+## ~/.foreman/config.toml [projects.tackle-tally] (read-only)
+[projects.tackle-tally]
+path = "~/git/tackle-tally"
+base_branch = "main"
+verify = "tests"
+speckit = true
+concurrency = 3       # T0048 device lane: needs the T0048 lane code in taskd (else 1); was 1 (2026-11-04), before that 2
+resources = ["ios-sim", "android-emu"]   # workers take turns on these (task lease)
+resource_groups = { devices = { members = ["ios-sim", "android-emu"], capacity = 1 } }   # T0048: one device worker at a time across both (16 GB Mac)
+device_steps = ["implement", "test"]   # T0048: device_steps_running defaults to capacity + 1 = 2
+merge = "direct"      # no GitHub PRs (user preference, 2026-05-15)
+merge_gate = true     # but wait for approval after the user has tested a build
+squash = false        # merge --no-ff so the feature branch stays visible in history
+tickets = "linear"
+ticket_team = "TAC"
+ticket_states = { start = "In Progress", review = "In Review", done = "Done" }
+deny = ["Bash(supabase db *)", "Bash(eas submit*)"]
+notes = "Expo React Native fishing catch-log app with Supabase and Drizzle. Tests: npm test (jest). Never touch the production Supabase project."
+step_timeouts = { implement = 120, test = 180 }   # T0045: Maestro device matrix needs longer than the global 90
+
+
+## backup
+-rw-r--r--@ 1 xi  staff  4588  4 Nov 22:43 /Users/xi/.foreman/config.toml.bak-t0048
+
+## docs mentions
+README.md:46:resource_groups = { devices = { members = ["ios-sim", "android-emu"], capacity = 1 } }   # one slot across both
+README.md:47:device_steps = ["implement", "test"]      # steps the device lane governs (default when a group exists)
+README.md:48:# device_steps_running = 2                # max device steps running at once (default: max capacity + 1)
+README.md:80:`task lease [--expect <minutes>]`, `task release`, `task leases`.
+README.md:219:over it. Workers use `task lease <name> [--wait N] [--expect <minutes>] [--reason ..]`,
+README.md:242:- A group (`resource_groups`) has `members` and a `capacity`. A step holding
+README.md:247:- `device_steps` names the steps that use the lane (default `implement` and
+README.md:248:  `test` when a group exists). `device_steps_running` caps how many of them run
+README.md:257:  {step, reason}`) when `device_steps_running` is reached (`device_limit`),
+README.md:262:- `--expect <minutes>` is stored on the lease. Asking again updates it and
+skills/foreman/SKILL.md:48:8. **Device lane.** Projects with `device_steps` share a lane of device capacity (a resource group with a `capacity`). In `task ls`, 

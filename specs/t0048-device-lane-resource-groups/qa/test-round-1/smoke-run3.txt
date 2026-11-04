@@ -1,0 +1,7 @@
+device lane
+  task leases shows the lane
+happy path
+  T0001 -> done
+block/answer/resume
+  T0002 expected blocked, got done
+exit=1

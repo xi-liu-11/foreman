@@ -13,6 +13,10 @@ export const REPO_ROOT = join(import.meta.dir, "..");
 
 export type VerifyMode = "tests" | "browser" | "inspect";
 
+// A set of resources that share a capacity: each step holding at least one
+// member lease takes one slot (T0048 device lane).
+export interface ResourceGroup { name: string; members: string[]; capacity: number }
+
 export interface ProjectConfig {
   name: string;
   path: string;            // expanded absolute path to the main checkout
@@ -32,6 +36,9 @@ export interface ProjectConfig {
   resources: string[];     // shared devices workers take turns on (task lease), e.g. ios-sim, android-emu
   lease_max_minutes: number; // a resource lease held longer than this is logged as overdue (not released)
   step_timeouts?: Record<string, number>; // per-step runner budget in minutes, over defaults.step_timeouts
+  resource_groups: ResourceGroup[]; // device lanes; [] when none
+  device_steps: string[];  // step names that may need devices; default ["implement","test"] with groups, else []
+  device_steps_running: number; // max running device_steps; default max(capacity) + 1, or concurrency with no groups
 }
 
 export interface Defaults {
@@ -155,6 +162,9 @@ deny = []
 # resources = ["ios-sim", "android-emu"]   # devices workers take turns on (task lease)
 # lease_max_minutes = 45
 # step_timeouts = { implement = 120, test = 180 }   # minutes; over [defaults] step_timeouts and step_timeout_min
+# resource_groups = { devices = { members = ["ios-sim", "android-emu"], capacity = 1 } }   # one device lane across both
+# device_steps = ["implement", "test"]   # steps that may need devices (default with a group)
+# device_steps_running = 2               # max running device steps (default: capacity + 1)
 # notes = "Three.js app; run with bun dev on port 5173."
 `;
 }
@@ -176,6 +186,8 @@ export function loadConfig(): ForemanConfig {
   defaults.step_timeouts = parseStepTimeouts(raw.defaults?.step_timeouts, "defaults");
   const projects: Record<string, ProjectConfig> = {};
   for (const [name, p] of Object.entries<any>(raw.projects ?? {})) {
+    const concurrency = Number(p.concurrency ?? defaults.concurrency);
+    const lane = parseLane(p, `projects.${name}`, Array.isArray(p.resources) ? p.resources.map(String) : [], concurrency);
     projects[name] = {
       name,
       path: expandHome(String(p.path)),
@@ -183,7 +195,7 @@ export function loadConfig(): ForemanConfig {
       verify: (p.verify ?? "tests") as VerifyMode,
       speckit: Boolean(p.speckit ?? false),
       deny: Array.isArray(p.deny) ? p.deny.map(String) : [],
-      concurrency: Number(p.concurrency ?? defaults.concurrency),
+      concurrency,
       merge: p.merge === "direct" ? "direct" : "pr",
       merge_gate: p.merge === "direct" ? Boolean(p.merge_gate ?? false) : true,
       squash: Boolean(p.squash ?? true),
@@ -192,9 +204,12 @@ export function loadConfig(): ForemanConfig {
       ticket_team: p.ticket_team ? String(p.ticket_team) : undefined,
       ticket_states: typeof p.ticket_states === "object" && p.ticket_states ? p.ticket_states : {},
       notes: p.notes ? String(p.notes) : undefined,
-      resources: Array.isArray(p.resources) ? p.resources.map(String) : [],
+      resources: lane.resources,
       lease_max_minutes: Number(p.lease_max_minutes ?? defaults.lease_max_minutes),
       step_timeouts: parseStepTimeouts(p.step_timeouts, `projects.${name}`),
+      resource_groups: lane.resource_groups,
+      device_steps: lane.device_steps,
+      device_steps_running: lane.device_steps_running,
     };
   }
   const tickets = { linear: raw.tickets?.linear ? { api_key: raw.tickets.linear.api_key ? String(raw.tickets.linear.api_key) : undefined } : undefined };
@@ -215,6 +230,56 @@ export function parseStepTimeouts(raw: unknown, where: string): Record<string, n
     else console.warn(`config: ${where}.step_timeouts.${step} = ${JSON.stringify(v)} is not a positive number, ignored`);
   }
   return out;
+}
+
+const posInt = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v > 0;
+
+// The device lane of one project table: resource_groups (inline or sub-table),
+// device_steps and device_steps_running. Bad values are warned and replaced;
+// group members missing from resources are appended to the returned resources.
+export function parseLane(raw: any, where: string, resources: string[], concurrency: number):
+  { resource_groups: ResourceGroup[]; device_steps: string[]; device_steps_running: number; resources: string[] } {
+  const groups: ResourceGroup[] = [];
+  const outResources = [...resources];
+  const seen = new Set<string>();
+  const rg = raw?.resource_groups;
+  if (rg !== undefined && rg !== null && (typeof rg !== "object" || Array.isArray(rg))) console.warn(`config: ${where}.resource_groups is not a table, ignored`);
+  else for (const [gname, g] of Object.entries<any>(rg ?? {})) {
+    const members = g?.members;
+    if (!Array.isArray(members) || !members.length || !members.every((m: unknown) => typeof m === "string")) {
+      console.warn(`config: ${where}.resource_groups.${gname}.members must be a non-empty array of strings, group ignored`);
+      continue;
+    }
+    let capacity = g.capacity;
+    if (!posInt(capacity)) {
+      console.warn(`config: ${where}.resource_groups.${gname}.capacity = ${JSON.stringify(capacity)} is not a positive integer, using 1`);
+      capacity = 1;
+    }
+    const kept: string[] = [];
+    for (const m of members as string[]) {
+      if (seen.has(m)) { console.warn(`config: ${where}.resource_groups.${gname}: '${m}' is already in an earlier group, dropped here`); continue; }
+      if (kept.includes(m)) continue;
+      seen.add(m); kept.push(m);
+      if (!outResources.includes(m)) {
+        console.warn(`config: ${where}.resource_groups.${gname}: '${m}' is not in resources, added`);
+        outResources.push(m);
+      }
+    }
+    if (kept.length) groups.push({ name: gname, members: kept, capacity });
+  }
+  const defaultSteps = groups.length ? ["implement", "test"] : [];
+  let device_steps = defaultSteps;
+  if (raw?.device_steps !== undefined) {
+    if (Array.isArray(raw.device_steps)) device_steps = raw.device_steps.map(String);
+    else console.warn(`config: ${where}.device_steps is not an array, using ${JSON.stringify(defaultSteps)}`);
+  }
+  const defaultRunning = groups.length ? Math.max(...groups.map(g => g.capacity)) + 1 : concurrency;
+  let device_steps_running = defaultRunning;
+  if (raw?.device_steps_running !== undefined) {
+    if (posInt(raw.device_steps_running)) device_steps_running = raw.device_steps_running;
+    else console.warn(`config: ${where}.device_steps_running = ${JSON.stringify(raw.device_steps_running)} is not a positive integer, using ${defaultRunning}`);
+  }
+  return { resource_groups: groups, device_steps, device_steps_running, resources: outResources };
 }
 
 // Runner budget for one step: project map, then defaults map, then the global.

@@ -43,6 +43,9 @@ speckit = true
 concurrency = 2
 resources = ["ios-sim", "android-emu"]   # shared devices workers lease
 lease_max_minutes = 45                    # flag holds longer than this
+resource_groups = { devices = { members = ["ios-sim", "android-emu"], capacity = 1 } }   # one slot across both
+device_steps = ["implement", "test"]      # steps the device lane governs (default when a group exists)
+# device_steps_running = 2                # max device steps running at once (default: max capacity + 1)
 step_timeouts = { implement = 120, test = 180 }   # minutes per step, overrides defaults
 deny = ["Bash(supabase *)"]
 notes = "Three.js app; run with bun dev on port 5173."
@@ -74,7 +77,7 @@ task create ... --branch <b> --start-at <step> --continues <id>   # continue a f
 
 Workers use the same CLI with `FOREMAN_TASK` and `FOREMAN_STEP` set:
 `task note`, `task block`, `task artifact add`, `task show`, `task ticket ...`,
-`task lease`, `task release`, `task leases`.
+`task lease [--expect <minutes>]`, `task release`, `task leases`.
 
 ### Superseded tasks
 
@@ -213,7 +216,7 @@ to the next step launched.
 
 A resource lease is an exclusive, named hold on a shared device (a simulator, an
 emulator, a browser profile) so parallel workers take turns instead of fighting
-over it. Workers use `task lease <name> [--wait N] [--reason ..]`,
+over it. Workers use `task lease <name> [--wait N] [--expect <minutes>] [--reason ..]`,
 `task release <name>` and `task leases`.
 
 - The key is project + machine (the step's herdr machine, or local) + resource.
@@ -231,6 +234,41 @@ over it. Workers use `task lease <name> [--wait N] [--reason ..]`,
   project declares `resources` or verifies in a browser (implicit `browser`).
   Undeclared names are granted with a warning.
 - Events: `lease.requested`, `lease.granted`, `lease.released`, `lease.overdue`.
+
+#### Device lane
+
+Resource groups turn per-device leases into a lane with a capacity.
+
+- A group (`resource_groups`) has `members` and a `capacity`. A step holding
+  any member takes one slot, however many members it holds. Per-resource
+  exclusivity is unchanged. A resource in no group is an implicit group of
+  capacity 1, which is the old behaviour. Groups are scoped per project and
+  machine.
+- `device_steps` names the steps that use the lane (default `implement` and
+  `test` when a group exists). `device_steps_running` caps how many of them run
+  at once (default: largest capacity + 1, so one can be preparing while others
+  hold devices). `concurrency` still bounds all steps. Device-free steps are
+  never held by the lane.
+- Grant order: tasks are ranked by their head waiter: `test` before
+  `implement` before other steps, then higher `qa_cycles`, then older request.
+  Within a task, FIFO. Grants are greedy: a free slot goes to the next waiter
+  that fits.
+- Dispatch preference: a queued device step is held (event `step.deferred
+  {step, reason}`) when `device_steps_running` is reached (`device_limit`),
+  when the lane is full with waiters and the free step slots are needed by
+  queued device-free steps (`lane_busy`), or when a better-ranked queued device
+  step would take the last device slot (`ranked_behind`). Ranking is task
+  priority, then the grant ranking.
+- `--expect <minutes>` is stored on the lease. Asking again updates it and
+  re-arms `lease.overdue`. Overdue uses it, else `lease_max_minutes`. Waiters
+  get an ETA computed from the holders' remaining expected time.
+- `task leases` prints a block per lane, for example
+  `tackle-tally local devices (capacity 1, device steps 2/2 running)`.
+  `task ls` shows `waiting for devices (2nd)` for a step queued on the lane and
+  `queued: device lane` for a step held at dispatch.
+- Starvation bound: an implement waits behind tests only while tests keep
+  arriving, which is bounded by the number of tasks in QA.
+- `GET /lanes?project=` returns the lanes with holders, waiters and ETAs.
 
 A running taskd must be restarted to pick this up: `foreman service restart`.
 
@@ -252,7 +290,9 @@ A running taskd must be restarted to pick this up: `foreman service restart`.
 
 ## Testing
 
-`bun test` runs `test/leases.test.ts`, the lease policy against a temp store.
+`bun test` runs `test/leases.test.ts`, the lease policy against a temp store,
+`test/lane.test.ts`, the pure lane policies and `parseLane`, and
+`test/lane-cli.test.ts`, the CLI rendering of lanes.
 
 `test/smoke.sh` runs an isolated taskd on port 7778 with `test/fake-claude.sh`
 standing in for `claude` (set via `FOREMAN_CLAUDE_BIN`). `test/fake-gh.sh` stands in for `gh` and `test/fake-linear.ts` for Linear's API. It drives the happy,

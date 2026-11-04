@@ -98,7 +98,14 @@ export interface LeaseRow {
   requested_at: string;
   granted_at: string | null;
   overdue_at: string | null;
+  expect_min: number | null; // the holder's expected hold in minutes (task lease --expect)
 }
+
+// A lease row with what the grant policy ranks on.
+export interface LeaseWaiterRow extends LeaseRow { step: string; qa_cycles: number }
+
+// A queued step with what the dispatch policy ranks on.
+export interface QueuedStepRow extends StepRow { priority: number; qa_cycles: number }
 
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
@@ -163,6 +170,7 @@ CREATE TABLE IF NOT EXISTS resource_leases (
   step_id INTEGER NOT NULL REFERENCES steps(id),
   reason TEXT,
   requested_at TEXT NOT NULL, granted_at TEXT, overdue_at TEXT,
+  expect_min INTEGER,
   UNIQUE (project, machine, resource, step_id)
 );
 CREATE INDEX IF NOT EXISTS resource_leases_key ON resource_leases(project, machine, resource, id);
@@ -188,6 +196,8 @@ export class Store {
     const stepCols = new Set((this.db.query("PRAGMA table_info(steps)").all() as { name: string }[]).map(c => c.name));
     if (!stepCols.has("timeout_min")) this.db.exec("ALTER TABLE steps ADD COLUMN timeout_min INTEGER");
     if (!cols.has("rejection")) this.db.exec("ALTER TABLE tasks ADD COLUMN rejection TEXT");
+    const leaseCols = new Set((this.db.query("PRAGMA table_info(resource_leases)").all() as { name: string }[]).map(c => c.name));
+    if (!leaseCols.has("expect_min")) this.db.exec("ALTER TABLE resource_leases ADD COLUMN expect_min INTEGER");
   }
 
   event(type: string, data: Record<string, unknown> = {}, task_id: string | null = null, step_id: number | null = null): void {
@@ -265,6 +275,14 @@ export class Store {
     if (project) return (this.db.query("SELECT COUNT(*) c FROM steps s JOIN tasks t ON t.id = s.task_id WHERE s.status = 'running' AND t.project = ?").get(project) as any).c;
     return (this.db.query("SELECT COUNT(*) c FROM steps WHERE status = 'running'").get() as any).c;
   }
+  runningStepsOf(project: string): StepRow[] {
+    return this.db.query("SELECT s.* FROM steps s JOIN tasks t ON t.id = s.task_id WHERE s.status = 'running' AND t.project = ? ORDER BY s.id").all(project) as StepRow[];
+  }
+  // Queued steps of live tasks only: a stale queued row of a gated or closed task must not hold dispatch back.
+  queuedLiveSteps(project: string): QueuedStepRow[] {
+    return this.db.query(`SELECT s.*, t.priority AS priority, t.qa_cycles AS qa_cycles FROM steps s JOIN tasks t ON t.id = s.task_id
+      WHERE s.status = 'queued' AND t.project = ? AND t.status IN ('queued','running','blocked') ORDER BY s.id`).all(project) as QueuedStepRow[];
+  }
 
   // --- blocks ---
   insertBlock(task_id: string, step_id: number, question: string): BlockRow {
@@ -295,9 +313,9 @@ export class Store {
   }
 
   // --- resource leases (policy lives in leases.ts) ---
-  insertLease(l: { project: string; machine: string; resource: string; task_id: string; step_id: number; reason: string | null }): LeaseRow {
-    const r = this.db.run("INSERT INTO resource_leases (project, machine, resource, task_id, step_id, reason, requested_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      [l.project, l.machine, l.resource, l.task_id, l.step_id, l.reason, now()]);
+  insertLease(l: { project: string; machine: string; resource: string; task_id: string; step_id: number; reason: string | null; expect_min?: number | null }): LeaseRow {
+    const r = this.db.run("INSERT INTO resource_leases (project, machine, resource, task_id, step_id, reason, requested_at, expect_min) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      [l.project, l.machine, l.resource, l.task_id, l.step_id, l.reason, now(), l.expect_min ?? null]);
     return this.db.query("SELECT * FROM resource_leases WHERE id = ?").get(Number(r.lastInsertRowid)) as LeaseRow;
   }
   getLease(step_id: number, project: string, machine: string, resource: string): LeaseRow | null {
@@ -323,6 +341,17 @@ export class Store {
   }
   markLeaseOverdue(id: number): void {
     this.db.run("UPDATE resource_leases SET overdue_at = ? WHERE id = ?", [now(), id]);
+  }
+  // A new expected hold also re-arms the overdue flag.
+  setLeaseExpect(id: number, min: number): void {
+    this.db.run("UPDATE resource_leases SET expect_min = ?, overdue_at = NULL WHERE id = ?", [min, id]);
+  }
+  leaseWaitersInfo(project: string, machine: string, resources: string[]): LeaseWaiterRow[] {
+    if (!resources.length) return [];
+    return this.db.query(`SELECT l.*, s.name AS step, t.qa_cycles AS qa_cycles FROM resource_leases l
+      JOIN steps s ON s.id = l.step_id JOIN tasks t ON t.id = l.task_id
+      WHERE l.project = ? AND l.machine = ? AND l.resource IN (${resources.map(() => "?").join(",")}) ORDER BY l.id`)
+      .all(project, machine, ...resources) as LeaseWaiterRow[];
   }
   deleteLease(id: number): void {
     this.db.run("DELETE FROM resource_leases WHERE id = ?", [id]);

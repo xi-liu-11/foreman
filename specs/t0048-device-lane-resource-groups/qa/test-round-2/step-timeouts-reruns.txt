@@ -1,0 +1,24 @@
+run1: (fail) runner kills at step.timeout_min, or the global when null [16.17ms]
+run1:  10 pass
+run1:  1 fail
+run2: (fail) runner kills at step.timeout_min, or the global when null [23.00ms]
+run2:  10 pass
+run2:  1 fail
+run3: (fail) runner kills at step.timeout_min, or the global when null [16.89ms]
+run3:  10 pass
+run3:  1 fail
+run4: (fail) runner kills at step.timeout_min, or the global when null [16.02ms]
+run4:  10 pass
+run4:  1 fail
+run5: (fail) runner kills at step.timeout_min, or the global when null [16.48ms]
+run5:  10 pass
+run5:  1 fail
+23:20  up 9 days, 13:31, 4 users, load averages: 16.61 16.38 18.66
+== diff main...HEAD on runner/step-timeouts test/cli invokedAs:
+       0
+^9a92cf9 (Xi Liu 2026-10-28 01:36:07 +1000 12) const invokedAs = process.env.FOREMAN_CLI_NAME ?? basename(process.argv[1] ?? "task");
+== branch, FOREMAN_CLI_NAME=foreman kept (as taskd sets it)
+ 11 pass
+ 0 fail
+ 11 pass
+ 0 fail

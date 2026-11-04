@@ -13,7 +13,8 @@ import { join } from "node:path";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { Store, CLOSED_STATUSES, type TaskRow, type StepRow, now } from "./db";
 import { loadConfig, denyListFor, stepTimeoutMin, deviceResources, REPO_ROOT, RUNS_DIR, type ForemanConfig, type ProjectConfig } from "./config";
-import { requestLease, releaseLease, releaseStepLeases, reconcileLeases, leaseView, devicePrompt } from "./leases";
+import { requestLease, releaseLease, releaseStepLeases, reconcileLeases, leaseView, devicePrompt, dispatchView, laneViews, laneStatusForTask, type GroupsOf } from "./leases";
+import { dispatchVerdict } from "./lane";
 import { pipelineFor, PIPELINES, type PipelineStep } from "./pipelines";
 import * as herdr from "./herdr";
 import * as git from "./git";
@@ -29,6 +30,11 @@ const log = (...a: unknown[]) => console.log(new Date().toISOString().slice(11, 
 const slugify = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48) || "task";
 const addSeconds = (sec: number) => new Date(Date.now() + sec * 1000).toISOString();
 const tx = <T>(fn: () => T): T => store.db.transaction(fn)();
+// Device lane (T0048): each project's resource groups, and the fallback hold for ETAs and overdue.
+const groupsOf: GroupsOf = p => cfg.projects[p]?.resource_groups ?? [];
+const leaseMaxMin = (p: string) => cfg.projects[p]?.lease_max_minutes ?? cfg.defaults.lease_max_minutes;
+// Queued step id -> why dispatch is holding it back; step.deferred is emitted once per step and reason.
+const deferred = new Map<number, string>();
 
 function project(task: TaskRow): ProjectConfig {
   const p = cfg.projects[task.project];
@@ -115,7 +121,7 @@ async function expireLeases(): Promise<void> {
     log(`lease expired for ${s.task_id}/${s.name}#${s.attempt}`);
     store.updateStep(s.id, { status: "failed", finished_at: now(), error: "lease expired: runner stopped heartbeating" });
     store.event("step.lease_expired", { step: s.name, attempt: s.attempt }, s.task_id, s.id);
-    releaseStepLeases(store, s.id, "heartbeat lease expired");
+    releaseStepLeases(store, s.id, "heartbeat lease expired", groupsOf);
     cancelRequested.add(s.id);
     if (s.tab_id) await herdr.closeTab(s.tab_id, s.machine);
   }
@@ -126,7 +132,8 @@ export async function tick(): Promise<void> {
   ticking = true;
   try {
     await expireLeases();
-    try { reconcileLeases(store, p => cfg.projects[p]?.lease_max_minutes ?? cfg.defaults.lease_max_minutes); }
+    for (const id of deferred.keys()) if (store.getStep(id)?.status !== "queued") deferred.delete(id);
+    try { reconcileLeases(store, leaseMaxMin, groupsOf); }
     catch (e: any) { log("reconcile resource leases failed:", e.message); store.event("scheduler.error", { error: `resource leases: ${e.message}` }); }
     for (const { id } of store.listTasks({ status: ["queued", "running", "blocked"] })) {
       // Earlier iterations await, so this task may have been closed since the listing.
@@ -373,8 +380,21 @@ async function createStep(task: TaskRow, name: string, role: string, attempt: nu
 
 async function tryLaunch(task: TaskRow, step: StepRow): Promise<void> {
   const proj = project(task);
-  if (store.runningCount() >= cfg.defaults.concurrency) return;
-  if (store.runningCount(task.project) >= proj.concurrency) return;
+  // Concurrency is the blocker now, not the device lane: drop any held-back reason so task ls does not name the lane.
+  if (store.runningCount() >= cfg.defaults.concurrency || store.runningCount(task.project) >= proj.concurrency) { deferred.delete(step.id); return; }
+  // Device lane: hold device steps back so device-free work and better-ranked device steps go first.
+  const free = Math.min(cfg.defaults.concurrency - store.runningCount(), proj.concurrency - store.runningCount(task.project));
+  const verdict = dispatchVerdict(
+    { step_id: step.id, task_id: task.id, name: step.name, priority: task.priority, qa_cycles: task.qa_cycles, created_at: step.created_at },
+    dispatchView(store, task.project, proj, free));
+  if (!verdict.launch) {
+    if (deferred.get(step.id) !== verdict.reason) {
+      deferred.set(step.id, verdict.reason);
+      store.event("step.deferred", { step: step.name, reason: verdict.reason }, task.id, step.id);
+    }
+    return;
+  }
+  deferred.delete(step.id);
   const cwd = task.worktree ?? proj.path;
   if (!existsSync(cwd)) { store.updateStep(step.id, { status: "failed", finished_at: now(), error: `cwd missing: ${cwd}` }); return; }
 
@@ -434,7 +454,7 @@ async function failTask(task: TaskRow, reason: string): Promise<void> {
   tx(() => {
     store.updateTask(task.id, { status: "failed", result: JSON.stringify({ error: reason }) });
     store.event("task.failed", { reason }, task.id);
-    for (const s of running) releaseStepLeases(store, s.id, "task failed");
+    for (const s of running) releaseStepLeases(store, s.id, "task failed", groupsOf);
   });
   // R2: siblings still running (parallel QA) must stop.
   for (const s of running) cancelRequested.add(s.id);
@@ -450,7 +470,7 @@ const isStopped = (t: TaskRow) => t.status === "cancelled" || t.status === "supe
 function stopTask(task: TaskRow, why: "cancelled" | "superseded"): void {
   for (const b of store.openBlocks(task.id)) store.answerBlock(b.id, `(task ${why})`);
   for (const s of store.stepsForTask(task.id).filter(s => s.status === "running")) {
-    releaseStepLeases(store, s.id, `task ${why}`);
+    releaseStepLeases(store, s.id, `task ${why}`, groupsOf);
     cancelRequested.add(s.id);
   }
 }
@@ -518,7 +538,7 @@ async function handleResult(step: StepRow, body: any): Promise<{ step_status: st
       if (!store.blocksForStep(step.id).length) store.insertBlock(task.id, step.id, so?.summary ?? "Worker reported blocked without a question.");
       if (!isStopped(task)) store.updateTask(task.id, { status: "blocked" });
     }
-    releaseStepLeases(store, step.id, `step ${status}`);
+    releaseStepLeases(store, step.id, `step ${status}`, groupsOf);
   });
   cancelRequested.delete(step.id);
 
@@ -583,7 +603,7 @@ async function stepContext(step: StepRow) {
     PROJECT_NOTES: proj.notes ? `- Project notes: ${proj.notes}` : "",
     SLUG: slugify(task.title), FEATURE: (task.feature_dir ?? "").replace(/^specs\//, ""), BASE_BRANCH: proj.base_branch,
     QA_CYCLE: String(task.qa_cycles + 1), QA_FEEDBACK: qaFeedback, PLAN_CYCLE: String(task.plan_cycles + 1),
-    DEVICE_LEASES: devicePrompt(deviceResources(proj), step.role),
+    DEVICE_LEASES: devicePrompt(deviceResources(proj), step.role, proj.resource_groups),
     TICKET: ticket, TICKET_REF: task.ticket ?? "",
     TICKET_HANDOFF: task.ticket
       ? `\nThen post the Summary and To verify sections as a comment on ticket ${task.ticket} with \`task ticket comment "<text>"\` (one quoted argument, markdown allowed)${proj.ticket_states.review ? ` and move it with \`task ticket transition "${proj.ticket_states.review}"\`` : ""}. The ticket's readers are not developers; write for them.`
@@ -593,6 +613,16 @@ async function stepContext(step: StepRow) {
 }
 
 // ---------------------------------------------------------------- HTTP API
+
+// Device lane state of a task for task ls: waiting in a lane, or held back at dispatch.
+function laneOf(t: TaskRow): { state: "waiting"; position: number; of: number } | { state: "deferred"; reason: string } | null {
+  // A stopped task can keep a queued step row and a stale held-back entry; its real status wins.
+  if (!["queued", "running", "blocked"].includes(t.status)) return null;
+  const w = laneStatusForTask(store, t.id, groupsOf);
+  if (w) return { state: "waiting", ...w };
+  const q = store.stepsForTask(t.id).find(s => s.status === "queued" && deferred.has(s.id));
+  return q ? { state: "deferred", reason: deferred.get(q.id)! } : null;
+}
 
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json" } });
 const bad = (msg: string, status = 400) => json({ error: msg }, status);
@@ -613,7 +643,7 @@ export async function route(req: Request): Promise<Response> {
   if (p === "/tasks" && req.method === "GET") {
     const status = url.searchParams.get("status")?.split(",").filter(Boolean);
     const tasks = store.listTasks({ status, project: url.searchParams.get("project") ?? undefined, all: url.searchParams.get("all") === "1" });
-    return json(tasks.map(t => ({ ...t, gate_label: t.status === "gate" ? gateLabel(t) : null, open_blocks: store.openBlocks(t.id).length, cost_usd: store.stepsForTask(t.id).reduce((a, s) => a + s.cost_usd, 0) })));
+    return json(tasks.map(t => ({ ...t, gate_label: t.status === "gate" ? gateLabel(t) : null, open_blocks: store.openBlocks(t.id).length, cost_usd: store.stepsForTask(t.id).reduce((a, s) => a + s.cost_usd, 0), lane: laneOf(t) })));
   }
   if (p === "/tasks" && req.method === "POST") {
     const { project: projName, kind, priority, ticket, branch: existingBranch, start_at, continues } = body;
@@ -709,7 +739,7 @@ export async function route(req: Request): Promise<Response> {
   }
   if ((mm = m(/^\/tasks\/([^/]+)$/)) && req.method === "GET") {
     const task = store.getTask(mm[1]); if (!task) return bad("no such task", 404);
-    return json({ task: { ...task, gate_label: task.status === "gate" ? gateLabel(task) : null }, steps: store.stepsForTask(task.id), blocks: store.openBlocks(task.id), artifacts: store.artifactsForTask(task.id), leases: store.leasesForTask(task.id).map(r => leaseView(store, r)), events: store.eventsForTask(task.id, 50).reverse() });
+    return json({ task: { ...task, gate_label: task.status === "gate" ? gateLabel(task) : null }, steps: store.stepsForTask(task.id), blocks: store.openBlocks(task.id), artifacts: store.artifactsForTask(task.id), leases: store.leasesForTask(task.id).map(r => leaseView(store, r, groupsOf, leaseMaxMin(r.project))), events: store.eventsForTask(task.id, 50).reverse() });
   }
   if ((mm = m(/^\/tasks\/([^/]+)\/(cancel|close|approve|reject|retry|note|artifacts|blocks)$/)) && req.method === "POST") {
     const task = store.getTask(mm[1]); if (!task) return bad("no such task", 404);
@@ -859,7 +889,13 @@ export async function route(req: Request): Promise<Response> {
     const task = store.getTask(step.task_id)!;
     const proj = cfg.projects[task.project];
     const declared = proj?.resources.length ? deviceResources(proj) : [];
-    const state = requestLease(store, task, step, resource, body.reason ? String(body.reason) : null, declared);
+    let expect_min: number | null = null;
+    if (body.expect_min !== undefined && body.expect_min !== null) {
+      const e = Number(body.expect_min);
+      if (typeof body.expect_min === "boolean" || !Number.isFinite(e) || e <= 0 || e > 1440) return bad("expect_min must be minutes > 0");
+      expect_min = Math.ceil(e);
+    }
+    const state = requestLease(store, task, step, resource, body.reason ? String(body.reason) : null, declared, { expect_min, groupsOf, fallbackMin: leaseMaxMin(task.project) });
     if (state.warning) log(`${task.id}/${step.name}#${step.attempt}: ${state.warning}`);
     return json(state);
   }
@@ -867,12 +903,22 @@ export async function route(req: Request): Promise<Response> {
     const step = store.getStep(Number(mm[1])); if (!step) return bad("no such step", 404);
     const resource = typeof body.resource === "string" ? body.resource.trim() : "";
     if (!resource) return bad("resource required");
-    return json({ ok: true, ...releaseLease(store, step, resource) });
+    return json({ ok: true, ...releaseLease(store, step, resource, "released", groupsOf) });
   }
   if (p === "/leases" && req.method === "GET") {
     const taskId = url.searchParams.get("task");
     const projName = url.searchParams.get("project") ?? (taskId ? store.getTask(taskId)?.project : undefined) ?? undefined;
-    return json(store.listLeases({ project: projName }).map(r => leaseView(store, r)));
+    return json(store.listLeases({ project: projName }).map(r => leaseView(store, r, groupsOf, leaseMaxMin(r.project))));
+  }
+  if (p === "/lanes" && req.method === "GET") {
+    const taskId = url.searchParams.get("task");
+    const projName = url.searchParams.get("project") ?? (taskId ? store.getTask(taskId)?.project : undefined) ?? null;
+    const names = projName ? [projName] : Object.keys(cfg.projects);
+    const projects = Object.fromEntries(names.filter(n => cfg.projects[n]?.resource_groups.length).map(n => {
+      const pc = cfg.projects[n]!;
+      return [n, { device_steps: pc.device_steps, device_steps_running: pc.device_steps_running, device_running: store.runningStepsOf(n).filter(s => pc.device_steps.includes(s.name)).length }];
+    }));
+    return json({ lanes: laneViews(store, groupsOf, names, leaseMaxMin), projects });
   }
   if ((mm = m(/^\/steps\/(\d+)\/result$/)) && req.method === "POST") {
     const step = store.getStep(Number(mm[1])); if (!step) return bad("no such step", 404);
@@ -891,15 +937,25 @@ export async function route(req: Request): Promise<Response> {
 // ---------------------------------------------------------------- main
 
 // step_timeouts keys that name no agent step in any pipeline (likely typos).
-export function unknownTimeoutKeys(c: ForemanConfig): { key: string; where: string }[] {
+function agentStepNames(): Set<string> {
   const names = new Set<string>();
   for (const p of Object.values(PIPELINES)) for (const s of p.steps) {
     if (s.type === "agent") names.add(s.name);
     if (s.type === "parallel") for (const ch of s.children) names.add(ch.name);
   }
+  return names;
+}
+export function unknownTimeoutKeys(c: ForemanConfig): { key: string; where: string }[] {
+  const names = agentStepNames();
   const maps: [string, Record<string, number>][] = [["defaults", c.defaults.step_timeouts ?? {}],
     ...Object.values(c.projects).map(p => [`projects.${p.name}`, p.step_timeouts ?? {}] as [string, Record<string, number>])];
   return maps.flatMap(([where, m]) => Object.keys(m).filter(k => !names.has(k)).map(key => ({ key, where })));
+}
+
+// device_steps names that match no agent step in any pipeline (likely typos).
+export function unknownDeviceSteps(c: ForemanConfig): { key: string; where: string }[] {
+  const names = agentStepNames();
+  return Object.values(c.projects).flatMap(p => p.device_steps.filter(k => !names.has(k)).map(key => ({ key, where: `projects.${p.name}` })));
 }
 
 export async function main(): Promise<void> {
@@ -911,6 +967,7 @@ export async function main(): Promise<void> {
     log(`startup: extended ${live.length} running lease(s) by ${cfg.defaults.lease_sec}s`);
   }
   for (const { key, where } of unknownTimeoutKeys(cfg)) log(`config: step_timeouts key '${key}' (${where}) matches no pipeline step`);
+  for (const { key, where } of unknownDeviceSteps(cfg)) log(`config: device_steps '${key}' (${where}) matches no pipeline step`);
   const server = Bun.serve({
     hostname: cfg.server.bind, port: cfg.server.port,
     fetch: (req) => route(req).catch((e: any) => { log("request error:", e.message); return bad(e.message, 500); }),

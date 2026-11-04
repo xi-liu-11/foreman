@@ -34,7 +34,11 @@ const ago = (iso: string | null) => {
   const s = Math.max(0, (Date.now() - Date.parse(iso)) / 1000);
   return s < 60 ? `${Math.round(s)}s` : s < 3600 ? `${Math.round(s / 60)}m` : s < 86400 ? `${Math.round(s / 3600)}h` : `${Math.round(s / 86400)}d`;
 };
-const statusText = (t: any) => t.superseded_by ? `superseded→${t.superseded_by}` : t.rejection && ["queued", "running", "blocked"].includes(t.status) ? "rejected, revising" : t.status;
+const ordinal = (n: number) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? "th" : ["th", "st", "nd", "rd"][n % 10] ?? "th"}`;
+const statusText = (t: any) => t.superseded_by ? `superseded→${t.superseded_by}` : t.rejection && ["queued", "running", "blocked"].includes(t.status) ? "rejected, revising"
+  : t.lane?.state === "waiting" ? `waiting for devices (${ordinal(t.lane.position)})` : t.lane?.state === "deferred" ? "queued: device lane" : t.status;
+const etaText = (l: any) => l.eta_min != null ? ` eta ~${l.eta_min}m` : "";
+const expectText = (l: any) => l.expect_min != null ? ` expect ~${l.expect_min}m${l.expect_left_min != null ? ` (${l.expect_left_min}m left)` : ""}` : "";
 const holderText = (h: any) => h ? `${h.task_id}/${h.step}#${h.attempt} for ${ago(h.since)}${h.reason ? ` (${h.reason})` : ""}` : "nobody";
 const out = (data: unknown, text: () => string) => console.log(jsonOut ? JSON.stringify(data, null, 2) : text());
 
@@ -73,10 +77,11 @@ Worker commands (task and step come from FOREMAN_TASK / FOREMAN_STEP)
   task artifact add <path> [--kind <kind>] [--note "<text>"]
   task ticket show|comment|transition|create ...   (ref defaults to the task's ticket)
   task show                       current task
-  task lease <resource> [--wait <seconds>] [--reason "<text>"]
+  task lease <resource> [--wait <seconds>] [--expect <minutes>] [--reason "<text>"]
                                   wait for a shared device (ios-sim, android-emu, ...); exit 3 if --wait runs out (place kept)
+                                  --expect: your estimate of the hold, shown to waiters as an ETA and used for the overdue flag
   task release <resource>         give a device back (also automatic when the step ends)
-  task leases [--project <name>]  holders and queues of shared devices
+  task leases [--project <name>]  device lanes, holders and queues of shared devices
 
 Add --json to any command for machine-readable output.`;
 
@@ -152,8 +157,8 @@ async function taskMain(): Promise<void> {
           }),
           d.blocks.length ? ["", "open questions:", ...d.blocks.map((b: any) => `  [${b.id}] ${b.question}`)].join("\n") : "",
           d.leases?.length ? ["", "leases:", ...d.leases.map((l: any) => l.state === "held"
-            ? `  ${pad(l.resource, 12)} held by ${l.step}#${l.attempt} for ${ago(l.granted_at)}${l.reason ? ` (${l.reason})` : ""}${l.overdue ? " OVERDUE" : ""}`
-            : `  ${pad(l.resource, 12)} waiting #${l.position} for ${l.step}#${l.attempt} (held by ${holderText(l.holder)})`)].join("\n") : "",
+            ? `  ${pad(l.resource, 12)} held by ${l.step}#${l.attempt} for ${ago(l.granted_at)}${l.reason ? ` (${l.reason})` : ""}${expectText(l)}${l.overdue ? " OVERDUE" : ""}`
+            : `  ${pad(l.resource, 12)} waiting #${l.position} for ${l.step}#${l.attempt} (held by ${holderText(l.holder)})${etaText(l)}`)].join("\n") : "",
           d.artifacts.length ? ["", "artifacts:", ...d.artifacts.map((a: any) => `  ${pad(a.kind, 10)} ${a.path}${a.note ? "  — " + a.note : ""}`)].join("\n") : "",
           t.result ? `\nresult: ${JSON.parse(t.result).summary ?? JSON.parse(t.result).error ?? ""}` : "",
           "", "recent events:",
@@ -246,10 +251,12 @@ async function taskMain(): Promise<void> {
       const resource = rest[0] ?? die("resource required, e.g. task lease ios-sim");
       const w = opt("wait");
       if (w !== undefined && !/^\d+$/.test(w)) die("--wait must be a non-negative integer (seconds)");
+      const e = opt("expect");
+      if (flag("expect") && (e === undefined || !/^\d+(\.\d+)?$/.test(e) || Number(e) <= 0 || Number(e) > 1440)) die("--expect must be minutes > 0 (at most 1440)");
       const started = Date.now();
       let warned = false, lastPrint = 0;
       for (;;) {
-        const st = await client.post(`/steps/${envStep}/lease`, { resource, reason: opt("reason") });
+        const st = await client.post(`/steps/${envStep}/lease`, { resource, reason: opt("reason"), ...(e !== undefined ? { expect_min: Number(e) } : {}) });
         if (st.warning && !warned) { console.error(`warning: ${st.warning}`); warned = true; }
         if (st.granted) {
           const already = st.holder && Date.parse(st.holder.since) < started - 1000;
@@ -257,7 +264,7 @@ async function taskMain(): Promise<void> {
           return;
         }
         if (!lastPrint || Date.now() - lastPrint >= 30_000) {
-          console.log(`waiting for ${resource}: held by ${holderText(st.holder)}; you are #${st.position} of ${st.queue}`);
+          console.log(`waiting for ${resource}: held by ${holderText(st.holder)}; you are #${st.position} of ${st.queue}${st.eta_min != null ? `, eta ~${st.eta_min}m` : ""}`);
           lastPrint = Date.now();
         }
         if (w !== undefined && Date.now() - started >= Number(w) * 1000) {
@@ -278,11 +285,20 @@ async function taskMain(): Promise<void> {
       const q = new URLSearchParams();
       if (opt("project")) q.set("project", opt("project")!); else if (envTask) q.set("task", envTask);
       const rows: any[] = await client.get(`/leases?${q}`);
-      out(rows, () => {
-        if (!rows.length) return "no leases held or waited for";
-        const head = `${pad("PROJECT", 14)} ${pad("MACHINE", 8)} ${pad("RESOURCE", 12)} ${pad("STATE", 10)} ${pad("TASK/STEP", 22)} ${pad("AGE", 5)} REASON`;
-        return [head, ...rows.map(l => `${pad(l.project, 14)} ${pad(l.machine, 8)} ${pad(l.resource, 12)} ${pad(l.state === "held" ? "held" : `waiting #${l.position}`, 10)} ${pad(`${l.task_id}/${l.step}#${l.attempt}`, 22)} ${pad(ago(l.state === "held" ? l.granted_at : l.requested_at), 5)} ${l.reason ?? ""}${l.overdue ? "  OVERDUE" : ""}`)].join("\n");
+      if (jsonOut) { out(rows, () => ""); return; }
+      // Same scope as the table: --project, else FOREMAN_TASK's project, else every project.
+      const lanes: any = await client.get(`/lanes?${q}`).catch(() => ({ lanes: [], projects: {} }));
+      const blocks = (lanes.lanes ?? []).map((ln: any) => {
+        const pr = lanes.projects?.[ln.project];
+        const head = `${ln.project} ${ln.machine} ${ln.group} (capacity ${ln.capacity}${pr ? `, device steps ${pr.device_running}/${pr.device_steps_running} running` : ""})`;
+        const hs = ln.holders.map((h: any) => `  held     ${h.task_id}/${h.step}#${h.attempt} ${h.resources.join(", ")} for ${h.held_min}m${h.expect_min != null ? ` expect ~${h.expect_min}m (${h.expect_left_min}m left)` : ""}${h.overdue ? "  OVERDUE" : ""}`);
+        const ws = ln.waiters.map((x: any) => `  ${pad(`#${x.position}`, 8)} ${x.task_id}/${x.step}#${x.attempt} ${x.resource} waiting ${x.waited_min}m eta ~${x.eta_min}m`);
+        return [head, ...(hs.length || ws.length ? [...hs, ...ws] : ["  free"])].join("\n");
       });
+      const table = !rows.length ? "no leases held or waited for" : [
+        `${pad("PROJECT", 14)} ${pad("MACHINE", 8)} ${pad("RESOURCE", 12)} ${pad("STATE", 10)} ${pad("TASK/STEP", 22)} ${pad("AGE", 5)} ${pad("EXPECT", 6)} REASON`,
+        ...rows.map(l => `${pad(l.project, 14)} ${pad(l.machine, 8)} ${pad(l.resource, 12)} ${pad(l.state === "held" ? "held" : `waiting #${l.position}`, 10)} ${pad(`${l.task_id}/${l.step}#${l.attempt}`, 22)} ${pad(ago(l.state === "held" ? l.granted_at : l.requested_at), 5)} ${pad(l.expect_min != null ? `${l.expect_min}m` : l.eta_min != null ? `eta${l.eta_min}m` : "", 6)} ${l.reason ?? ""}${l.overdue ? "  OVERDUE" : ""}`)].join("\n");
+      console.log([...blocks, ...(blocks.length ? [""] : []), table].join("\n"));
       return;
     }
     case "artifact": {
