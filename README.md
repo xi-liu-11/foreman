@@ -14,7 +14,11 @@ where workers run and can be watched.
   Fable for high-level judgement.
 - **Nothing sits idle.** A worker that needs you calls `task block "<question>"`
   and exits. You answer from your assistant pane, and the scheduler resumes the
-  same session with `--resume`.
+  same session with `--resume`. A worker never ends its turn while something it
+  started (a background job, a subagent, a device suite) is still running:
+  under `claude -p` the end of the turn is the end of the run. taskd flags a
+  failed step whose summary says work was still running with
+  `step ended early (work still running?)` in `taskd.log` and the step error.
 - **Herdr is the viewport.** One workspace per project (`fm:<project>`), one tab
   per running step. Tabs close on success and stay open on failure or block so
   you can inspect them.
@@ -201,6 +205,10 @@ A running taskd must be restarted to pick up config changes:
 `foreman service restart` (check `task ls --all` first so you do not restart
 in the middle of a long step).
 
+A running taskd must be restarted to pick up the early-end flag
+(`foreman service restart`, check `task ls --all` first). Prompt changes apply
+to the next step launched.
+
 ### Resource leases
 
 A resource lease is an exclusive, named hold on a shared device (a simulator, an
@@ -236,7 +244,7 @@ A running taskd must be restarted to pick this up: `foreman service restart`.
 6. Retro loop over transcripts
 7. ~~Web dashboard over the HTTP API~~ (`foreman dashboard`)
 8. Merge conflicts: when the rebase in `merge_direct` conflicts, insert a developer `resolve` step (rebase, resolve, run the suite) and retry the merge, instead of failing the task (seen on T0004 after 026 landed first)
-9. Runner: end the step when the `result` event arrives, instead of waiting for `claude -p` to exit. A worker that leaves background shell jobs running (emulator wait loops, Maestro) keeps the process alive until `step_timeout_min`, so a finished step is reported as a timeout. Seen three times on T0006 (attempts 7–9). Kill the process after a short grace period once the structured output is in; also add "no background jobs that outlive the turn" to the worker preamble.
+9. Runner: end the step when the `result` event arrives, instead of waiting for `claude -p` to exit. A worker that leaves background shell jobs running (emulator wait loops, Maestro) keeps the process alive until `step_timeout_min`, so a finished step is reported as a timeout. Seen three times on T0006 (attempts 7–9). Kill the process after a short grace period once the structured output is in.
 9. ~~Resource leases: workers take turns on shared devices (`task lease`)~~
 10. ~~Pipeline: a `plan_qa` verdict of `fail` currently falls through to the `plan_approved` gate, so the user is asked to approve a plan the reviewer rejected (T0020, 2026-10-30; worked around by cancelling and re-creating with `--branch <b> --start-at plan`). Make `plan_qa` an `on_fail → plan` loop like QA → implement, with its own cycle budget, and surface the findings at the gate if the budget runs out.~~
 11. Runner liveness under host overload: on 2026-10-31 the load average hit ~590 (orphaned Jest workers, two Metros, Maestro, emulator and simulator from concurrent workers) and three implement attempts of T0021 were failed with "runner stopped heartbeating" although the workers were alive; the retry budget was burnt by the environment, not the work. Fixes to weigh: heartbeat by pid liveness as well as HTTP; scale the lease window with load; have the runner kill its process group on exit so Metro/Jest children never outlive the step; pause dispatch while load is above a threshold; count a heartbeat-expiry failure separately from a work failure so it does not consume the 3-attempt budget.

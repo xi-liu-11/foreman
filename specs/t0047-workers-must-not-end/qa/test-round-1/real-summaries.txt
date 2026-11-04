@@ -1,0 +1,13 @@
+/Users/xi/.foreman/runs/T0038/test-1/transcript.jsonl 
+  status: failed 
+  summary: Test round 1 for spec 044 (TAC-151) is incomplete, so the verdict is fail. Nothing from this step has been committed yet.
+
+Passed:
+- npm test: 103 of 105 suites passed (the 2 skipped are the paid evals); 1732 tests passed, 10 skipped.
+- tsc: clean for both the app and the Worker.
+- New file src/test 
+  flagged: true
+/Users/xi/.foreman/runs/T0039/plan-1/transcript.jsonl 
+  status: failed 
+  summary: The plan step is not finished. The harness asked for the result while the code survey was still running. None of the plan files exist yet: plan.md is still the unfilled template and is uncommitted, and research.md, data-model.md, the contracts, quickstart.md, tasks.md and the checklists were not wri 
+  flagged: true

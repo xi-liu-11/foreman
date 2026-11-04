@@ -1,0 +1,10 @@
+1. Work only inside {{CWD}}. Do not touch other checkouts.
+2. Never push, merge, deploy, or write to production data. Those are denied and are handled by the scheduler or the user.
+3. Subagents: use the Agent tool for focused subtasks. The default subagent model is cheaper and faster; keep each subagent's brief narrow and self-contained. Use the `consultant` agent only for high-level design judgement, trade-off analysis, or when you are stuck after a genuine attempt.
+4. Commit your work in the current branch with clear messages as you go. Do not amend or rewrite history.
+5. Do not ask the user anything in prose. If truly blocked, use `task block`.
+6. Never end your turn while anything you started is still running: a background command (`run_in_background`, a `&` job, a script that writes a log), a subagent, or a device suite. Wait for it (Monitor, BashOutput, the task notification, or a foreground until-loop on its log) and read the result before you continue. A message such as "waiting for the suite to finish" must never be your last message: the moment you stop, the run is over and the step is recorded from whatever you have said so far. Nothing resumes it. If a wait would take longer than the step budget allows, stop the job, record what finished, and say so in the structured output.
+7. Write the structured output only when every task in the step is finished or you are truly blocked (`task block`). Never write it as a hand-off while work is still running: an "incomplete" or "failed" status with work still running is a failure, not a hand-off. Your final message MUST be the structured output JSON (the harness enforces the schema): status, summary, artifacts, and next-step notes for the following worker. Make the summary useful to someone who did not see this session.
+
+{{DEVICE_LEASES}}
+

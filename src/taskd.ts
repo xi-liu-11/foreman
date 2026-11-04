@@ -475,6 +475,14 @@ async function noteContinued(task: TaskRow, successor: TaskRow): Promise<void> {
 
 // ---------------------------------------------------------------- results
 
+// Heuristic only (T0047): a forced "failed" result whose summary says work was
+// still going usually means the worker ended its turn while waiting.
+const EARLY_END = /still running|waiting for|incomplete|not finished/i;
+export const EARLY_END_NOTE = "step ended early (work still running?)";
+export function endedEarly(summary: unknown): boolean {
+  return typeof summary === "string" && EARLY_END.test(summary);
+}
+
 async function handleResult(step: StepRow, body: any): Promise<{ step_status: string; task_status: string }> {
   const task = store.getTask(step.task_id)!;
   const r = body.result ?? {};
@@ -482,7 +490,13 @@ async function handleResult(step: StepRow, body: any): Promise<{ step_status: st
   let status: "done" | "blocked" | "failed";
   let error: string | null = null;
   if (body.killed) { status = "failed"; error = String(body.killed); }
-  else if (so?.status === "done" || so?.status === "blocked" || so?.status === "failed") { status = so.status; if (status === "failed") error = so.summary; }
+  else if (so?.status === "done" || so?.status === "blocked" || so?.status === "failed") {
+    status = so.status;
+    if (status === "failed") {
+      error = so.summary;
+      if (endedEarly(so.summary)) { error = `${EARLY_END_NOTE}: ${so.summary}`; log(`${task.id}/${step.name}#${step.attempt}: ${EARLY_END_NOTE}`); }
+    }
+  }
   else if (r.is_error || body.exit_code !== 0) { status = "failed"; error = r.subtype ?? r.result ?? body.stderr_tail?.trim().split("\n").pop() ?? `exit ${body.exit_code}`; }
   else if (r.subtype && r.subtype !== "success") { status = "failed"; error = r.subtype; }
   else { status = "failed"; error = "worker ended without structured output"; }

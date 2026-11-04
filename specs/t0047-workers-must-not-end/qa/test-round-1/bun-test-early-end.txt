@@ -1,0 +1,21 @@
+bun test v1.4.4 (38afee6c8)
+
+test/early-end.test.ts:
+08:52:21 EE1/implement#1: step ended early (work still running?)
+08:52:21 result EE1/implement#1: failed (step ended early (work still running?): Suite still running)
+08:52:21 result EE2/implement#1: failed (2 flows failed)
+08:52:21 result EE3/implement#1: done
+08:52:21 result EE4/implement#1: blocked
+08:52:21 result EE5/implement#1: failed (timeout after 90 min)
+08:52:21 EE6/implement#1: step ended early (work still running?)
+08:52:21 result EE6/implement#1: failed (step ended early (work still running?): Test round 1 for T0038 is incomplete, so the verdict is fail: the Maestro suite was started in the background and had not reported.)
+08:52:21 EE6/implement#2: step ended early (work still running?)
+08:52:21 result EE6/implement#2: failed (step ended early (work still running?): Test round 1 for T0038 is incomplete, so the verdict is fail: the Maestro suite was started in the background and had not reported.)
+08:52:21 EE6/implement#3: step ended early (work still running?)
+08:52:21 result EE6/implement#3: failed (step ended early (work still running?): Test round 1 for T0038 is incomplete, so the verdict is fail: the Maestro suite was started in the background and had not reported.)
+
+ 6 pass
+ 0 fail
+ 37 expect() calls
+Ran 6 tests across 1 file. [846.00ms]
+exit 0
