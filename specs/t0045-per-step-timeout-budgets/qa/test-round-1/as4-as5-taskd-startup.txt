@@ -1,0 +1,6 @@
+config: projects.inv.step_timeouts.test = 0 is not a positive number, ignored
+config: projects.inv.step_timeouts.implement = "x" is not a positive number, ignored
+config: projects.inv.step_timeouts.plan = -5 is not a positive number, ignored
+07:23:40 config: step_timeouts key 'tests' (defaults) matches no pipeline step
+07:23:40 taskd listening on http://127.0.0.1:7787 (herdr: no, workers run as background processes)
+07:23:40 projects: inv, tt

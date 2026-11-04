@@ -105,7 +105,9 @@ export async function runStep(stepId: number): Promise<void> {
       if (r?.cancel) { killedReason = "cancelled"; proc.kill(); }
     } catch (e: any) { console.error(`\x1b[33mheartbeat failed: ${e.message}\x1b[0m`); }
   }, (defaults.heartbeat_sec ?? 30) * 1000);
-  const timeout = setTimeout(() => { killedReason = `timeout after ${defaults.step_timeout_min} min`; proc.kill(); }, defaults.step_timeout_min * 60 * 1000);
+  // Per-step budget resolved by taskd at launch; an older taskd leaves it unset.
+  const budget = step.timeout_min ?? defaults.step_timeout_min;
+  const timeout = setTimeout(() => { killedReason = `timeout after ${budget} min`; proc.kill(); }, budget * 60 * 1000);
 
   const stderrPump = (async () => {
     for await (const chunk of proc.stderr) appendFileSync(stderrLog, Buffer.from(chunk));

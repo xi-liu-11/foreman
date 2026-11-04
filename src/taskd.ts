@@ -12,9 +12,9 @@
 import { join } from "node:path";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { Store, CLOSED_STATUSES, type TaskRow, type StepRow, now } from "./db";
-import { loadConfig, denyListFor, deviceResources, REPO_ROOT, RUNS_DIR, type ForemanConfig, type ProjectConfig } from "./config";
+import { loadConfig, denyListFor, stepTimeoutMin, deviceResources, REPO_ROOT, RUNS_DIR, type ForemanConfig, type ProjectConfig } from "./config";
 import { requestLease, releaseLease, releaseStepLeases, reconcileLeases, leaseView, devicePrompt } from "./leases";
-import { pipelineFor, type PipelineStep } from "./pipelines";
+import { pipelineFor, PIPELINES, type PipelineStep } from "./pipelines";
 import * as herdr from "./herdr";
 import * as git from "./git";
 import { providerFor, ticketContext, type Ticket } from "./tickets";
@@ -379,7 +379,7 @@ async function tryLaunch(task: TaskRow, step: StepRow): Promise<void> {
   if (!existsSync(cwd)) { store.updateStep(step.id, { status: "failed", finished_at: now(), error: `cwd missing: ${cwd}` }); return; }
 
   tx(() => {
-    store.updateStep(step.id, { status: "running", started_at: now(), lease_until: addSeconds(cfg.defaults.lease_sec) });
+    store.updateStep(step.id, { status: "running", started_at: now(), lease_until: addSeconds(cfg.defaults.lease_sec), timeout_min: stepTimeoutMin(cfg.defaults, proj, step.name) });
     store.updateTask(task.id, { status: "running" });
   });
   const env: Record<string, string> = {
@@ -876,6 +876,18 @@ export async function route(req: Request): Promise<Response> {
 
 // ---------------------------------------------------------------- main
 
+// step_timeouts keys that name no agent step in any pipeline (likely typos).
+export function unknownTimeoutKeys(c: ForemanConfig): { key: string; where: string }[] {
+  const names = new Set<string>();
+  for (const p of Object.values(PIPELINES)) for (const s of p.steps) {
+    if (s.type === "agent") names.add(s.name);
+    if (s.type === "parallel") for (const ch of s.children) names.add(ch.name);
+  }
+  const maps: [string, Record<string, number>][] = [["defaults", c.defaults.step_timeouts ?? {}],
+    ...Object.values(c.projects).map(p => [`projects.${p.name}`, p.step_timeouts ?? {}] as [string, Record<string, number>])];
+  return maps.flatMap(([where, m]) => Object.keys(m).filter(k => !names.has(k)).map(key => ({ key, where })));
+}
+
 export async function main(): Promise<void> {
   herdrOk = await herdr.herdrAvailable();
   // R3: a long outage must not expire every live lease on the first tick.
@@ -884,6 +896,7 @@ export async function main(): Promise<void> {
     for (const s of live) store.updateStep(s.id, { lease_until: addSeconds(cfg.defaults.lease_sec) });
     log(`startup: extended ${live.length} running lease(s) by ${cfg.defaults.lease_sec}s`);
   }
+  for (const { key, where } of unknownTimeoutKeys(cfg)) log(`config: step_timeouts key '${key}' (${where}) matches no pipeline step`);
   const server = Bun.serve({
     hostname: cfg.server.bind, port: cfg.server.port,
     fetch: (req) => route(req).catch((e: any) => { log("request error:", e.message); return bad(e.message, 500); }),

@@ -1,0 +1,35 @@
+happy path
+  T0001 -> done
+block/answer/resume
+  T0002 -> blocked
+  T0002 -> done
+crash/retry
+  T0003 -> done
+cancel
+  T0004 -> cancelled
+taskd outage longer than the lease mid-step
+  T0005 -> done
+  single attempt survived the outage
+implement (lite): plan, gate, implement, qa fails once, implement, qa passes, pr, open_pr, gate, merge
+  T0006 -> gate
+  T0006 -> gate
+  T0006 -> done
+  one QA cycle
+  branch fm/t0006-add-widget
+  pr url recorded
+  worktree removed after merge
+  merged work reached origin/main
+  step budgets recorded (implement 7, plan 90)
+implement (speckit): numbered branch and feature dir from template
+  branch 001-add-gadget
+  spec.md seeded from template
+  T0007 -> gate
+  T0007 -> gate
+  T0007 -> done
+implement (direct merge) from a Linear ticket: title/brief from ticket, worker ticket commands, squash onto main and push, ticket transitions
+  title taken from ticket
+  brief taken from ticket
+  worker created a child ticket
+error: project (or task) required
+  no start transition
+exit=1

@@ -1,0 +1,12 @@
+config: projects.inv.step_timeouts.test = 0 is not a positive number, ignored
+config: projects.inv.step_timeouts.implement = "x" is not a positive number, ignored
+config: projects.inv.step_timeouts.plan = -5 is not a positive number, ignored
+inv test 150
+inv implement 90
+inv plan 90
+inv review 90
+tt test 180
+tt implement 120
+tt plan 90
+tt review 90
+inv map {} tt map {"implement":120,"test":180}

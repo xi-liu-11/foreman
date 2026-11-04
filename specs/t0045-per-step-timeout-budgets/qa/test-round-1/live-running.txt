@@ -1,0 +1,3 @@
+T0037  running          tackle-tally   implement      implement      7h    $83.54     Share photos into Tackle Tally (import via share sheet)
+T0038  running          tackle-tally   implement      implement      4h    $7.21      Assistant: single Mate voice, characters hidden behind a flag
+T0045  running          foreman        implement_lite qa             42m   $3.84      Per-step timeout budgets and implement runs only touched flows

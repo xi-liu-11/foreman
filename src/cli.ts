@@ -147,7 +147,7 @@ async function taskMain(): Promise<void> {
           "steps:",
           ...d.steps.map((s: any) => {
             const r = s.result ? JSON.parse(s.result) : null;
-            return `  ${pad(s.name, 14)} #${s.attempt} ${pad(s.status, 8)} ${pad(s.role, 13)} ${pad(ago(s.started_at), 5)} $${s.cost_usd.toFixed(2)} ${s.turns}t${r?.verdict && r.verdict !== "n/a" ? " verdict=" + r.verdict : ""}${s.error ? " error: " + s.error : ""}${s.tab_id ? " tab=" + s.tab_id : ""}` +
+            return `  ${pad(s.name, 14)} #${s.attempt} ${pad(s.status, 8)} ${pad(s.role, 13)} ${pad(ago(s.started_at), 5)} $${s.cost_usd.toFixed(2)} ${s.turns}t${r?.verdict && r.verdict !== "n/a" ? " verdict=" + r.verdict : ""}${s.error ? " error: " + s.error : ""}${s.tab_id ? " tab=" + s.tab_id : ""}${s.status === "running" && s.timeout_min ? ` budget=${s.timeout_min}min` : ""}` +
               (r?.summary ? `\n      ${r.summary.replace(/\n/g, "\n      ")}` : "");
           }),
           d.blocks.length ? ["", "open questions:", ...d.blocks.map((b: any) => `  [${b.id}] ${b.question}`)].join("\n") : "",

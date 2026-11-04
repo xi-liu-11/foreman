@@ -1,0 +1,13 @@
+2:[server]
+7:[defaults]
+12:step_timeout_min = 90
+37:[tickets.linear]
+40:[projects.foreman]
+49:[projects.dicer]
+57:[projects.gbc]
+65:[projects.tackle-tally]
+80:step_timeouts = { implement = 120, test = 180 }   # T0045: Maestro device matrix needs longer than the global 90
+82:[projects.ttrpg]
+90:[projects.seeksta-score]
+97:[projects.pocketsmith-cli]
+105:[projects.pokedex]

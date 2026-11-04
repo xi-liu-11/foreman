@@ -1,0 +1,13 @@
+bun test v1.4.4 (38afee6c8)
+
+test/step-timeouts.test.ts:
+07:23:02 result STO2/research#1: failed (timeout after 0.02 min)
+07:23:03 failed STO1: current step 'qa' is not in the pipeline
+07:23:03 failed STO2: current step 'research' is not in the pipeline
+07:23:03 failed STO3: current step 'research' is not in the pipeline
+07:23:15 result STO3/research#1: failed (timeout after 0.04 min)
+
+ 11 pass
+ 0 fail
+ 32 expect() calls
+Ran 11 tests across 1 file. [26.23s]

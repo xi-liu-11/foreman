@@ -18,6 +18,7 @@ worktrees = "$T/worktrees"
 path = "$T/repos/lite"
 verify = "inspect"
 speckit = false
+step_timeouts = { implement = 7 }
 [projects.kit]
 path = "$T/repos/kit"
 verify = "inspect"
@@ -83,6 +84,7 @@ wait_for T0006 gate; "$ROOT/bin/task" approve T0006 >/dev/null; wait_for T0006 g
 [ "$(field T0006 pr_url)" = "https://example.invalid/pr/1" ] && echo "  pr url recorded" || { echo "  no pr url"; exit 1; }
 [ ! -d "$(field T0006 worktree)" ] && echo "  worktree removed after merge" || { echo "  worktree still present"; exit 1; }
 git -C "$T/repos/lite" fetch -q origin && git -C "$T/repos/lite" show origin/main:work.log | grep -q "step implement ran" && echo "  merged work reached origin/main" || { echo "  merge missing on origin"; exit 1; }
+"$ROOT/bin/task" show T0006 --json | python3 -c 'import json,sys; s=json.load(sys.stdin)["steps"]; b=lambda n: {x["timeout_min"] for x in s if x["name"]==n}; sys.exit(0 if b("implement")=={7} and b("plan")=={90} else 1)' && echo "  step budgets recorded (implement 7, plan 90)" || { echo "  wrong step budgets"; exit 1; }
 echo "implement (speckit): numbered branch and feature dir from template"
 "$ROOT/bin/task" create --project kit --kind implement --title "Add the gadget" --brief x >/dev/null
 [ "$(field T0007 branch)" = "001-add-gadget" ] && echo "  branch 001-add-gadget" || { echo "  unexpected branch $(field T0007 branch)"; exit 1; }

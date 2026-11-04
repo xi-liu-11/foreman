@@ -1,0 +1,18 @@
+[server]
+bind = "127.0.0.1"
+port = 7787
+token = "t"
+[defaults]
+worktrees = "/var/folders/7w/1mrvd9812138hkj9ndncqcvh0000gn/T/tmp.rCFyZoaXVN/wt"
+step_timeout_min = 90
+step_timeouts = { test = 150, tests = 999 }
+[projects.inv]
+path = "/var/folders/7w/1mrvd9812138hkj9ndncqcvh0000gn/T/tmp.rCFyZoaXVN/repo"
+verify = "inspect"
+step_timeouts = { test = 0, implement = "x", plan = -5 }
+[projects.tt.step_timeouts]
+implement = 120
+test = 180
+[projects.tt]
+path = "/var/folders/7w/1mrvd9812138hkj9ndncqcvh0000gn/T/tmp.rCFyZoaXVN/repo"
+verify = "inspect"

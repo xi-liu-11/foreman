@@ -39,6 +39,7 @@ speckit = true
 concurrency = 2
 resources = ["ios-sim", "android-emu"]   # shared devices workers lease
 lease_max_minutes = 45                    # flag holds longer than this
+step_timeouts = { implement = 120, test = 180 }   # minutes per step, overrides defaults
 deny = ["Bash(supabase *)"]
 notes = "Three.js app; run with bun dev on port 5173."
 ```
@@ -175,6 +176,30 @@ Resilience: each running step holds a lease refreshed by heartbeat. Lease
 expiry, non-zero exit, timeout, or a `failed` result mark the step failed and
 the scheduler retries, resuming the same session first, up to `max_attempts`,
 then fails the task and notifies you. Every transition is an event row.
+
+### Step timeouts
+
+Each step has a time budget. `[defaults] step_timeout_min` (default 90) is the
+global one. `step_timeouts` maps a pipeline step name (`plan`, `plan_qa`,
+`implement`, `review`, `test`, `handoff`, and so on; see `src/pipelines.ts`) to
+minutes, under `[defaults]` (`step_timeouts = { test = 150 }`) and per project
+(`[projects.<name>] step_timeouts = { implement = 120, test = 180 }`, or a
+`[projects.<name>.step_timeouts]` sub-table). Resolution: project map, then
+defaults map, then `step_timeout_min`. Values must be positive numbers; invalid
+entries are dropped with a warning. A key that matches no pipeline step logs
+`config: step_timeouts key '<k>' (<where>) matches no pipeline step` at taskd
+startup.
+
+The budget is resolved when the step launches and stored on the step row
+(`timeout_min`), so a later config change does not move a running step. `task
+show` prints ` budget=180min` on running steps; a step killed for time has the
+error `timeout after 180 min`. Heartbeat and lease timings are unchanged. For
+device and e2e suites, `implement` runs only the touched flows; the `test` step
+runs the full per-flow suite and the cross-platform matrix once per QA cycle.
+
+A running taskd must be restarted to pick up config changes:
+`foreman service restart` (check `task ls --all` first so you do not restart
+in the middle of a long step).
 
 ### Resource leases
 

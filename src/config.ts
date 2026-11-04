@@ -31,6 +31,7 @@ export interface ProjectConfig {
   notes?: string;          // free text injected into every worker prompt
   resources: string[];     // shared devices workers take turns on (task lease), e.g. ios-sim, android-emu
   lease_max_minutes: number; // a resource lease held longer than this is logged as overdue (not released)
+  step_timeouts?: Record<string, number>; // per-step runner budget in minutes, over defaults.step_timeouts
 }
 
 export interface Defaults {
@@ -39,6 +40,7 @@ export interface Defaults {
   consultant_model: string;
   max_turns: number;
   step_timeout_min: number;
+  step_timeouts: Record<string, number>; // per-step budget in minutes, over step_timeout_min
   max_attempts: number;
   max_qa_cycles: number;
   max_plan_cycles: number;
@@ -85,6 +87,7 @@ const DEFAULTS: Defaults = {
   consultant_model: "claude-fable-5-1",
   max_turns: 200,
   step_timeout_min: 90,
+  step_timeouts: {},
   max_attempts: 3,
   max_qa_cycles: 3,
   max_plan_cycles: 2,
@@ -117,6 +120,7 @@ subagent_model = "claude-sonnet-5-5"
 consultant_model = "claude-fable-5-1"
 max_turns = 200
 step_timeout_min = 90
+# step_timeouts = { test = 150 }   # per-step budgets in minutes; a project's step_timeouts wins
 max_attempts = 3
 max_qa_cycles = 3
 max_plan_cycles = 2   # plan QA reviews per round before the plan goes to the gate anyway
@@ -150,6 +154,7 @@ deny = []
 # ticket_states = { start = "In Progress", review = "In Review", done = "Done" }  # optional transitions
 # resources = ["ios-sim", "android-emu"]   # devices workers take turns on (task lease)
 # lease_max_minutes = 45
+# step_timeouts = { implement = 120, test = 180 }   # minutes; over [defaults] step_timeouts and step_timeout_min
 # notes = "Three.js app; run with bun dev on port 5173."
 `;
 }
@@ -168,6 +173,7 @@ export function loadConfig(): ForemanConfig {
     token: String(raw.server?.token ?? ""),
   };
   const defaults: Defaults = { ...DEFAULTS, ...(raw.defaults ?? {}) };
+  defaults.step_timeouts = parseStepTimeouts(raw.defaults?.step_timeouts, "defaults");
   const projects: Record<string, ProjectConfig> = {};
   for (const [name, p] of Object.entries<any>(raw.projects ?? {})) {
     projects[name] = {
@@ -188,10 +194,32 @@ export function loadConfig(): ForemanConfig {
       notes: p.notes ? String(p.notes) : undefined,
       resources: Array.isArray(p.resources) ? p.resources.map(String) : [],
       lease_max_minutes: Number(p.lease_max_minutes ?? defaults.lease_max_minutes),
+      step_timeouts: parseStepTimeouts(p.step_timeouts, `projects.${name}`),
     };
   }
   const tickets = { linear: raw.tickets?.linear ? { api_key: raw.tickets.linear.api_key ? String(raw.tickets.linear.api_key) : undefined } : undefined };
   return { server, defaults, tickets, projects };
+}
+
+// A step_timeouts table (inline or sub-table): step name -> minutes. Keeps
+// positive finite numbers; anything else is dropped with a warning.
+export function parseStepTimeouts(raw: unknown, where: string): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (raw === undefined || raw === null) return out;
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    console.warn(`config: ${where}.step_timeouts is not a table, ignored`);
+    return out;
+  }
+  for (const [step, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof v === "number" && Number.isFinite(v) && v > 0) out[step] = v;
+    else console.warn(`config: ${where}.step_timeouts.${step} = ${JSON.stringify(v)} is not a positive number, ignored`);
+  }
+  return out;
+}
+
+// Runner budget for one step: project map, then defaults map, then the global.
+export function stepTimeoutMin(defaults: Defaults, project: ProjectConfig | undefined, step: string): number {
+  return project?.step_timeouts?.[step] ?? defaults.step_timeouts?.[step] ?? defaults.step_timeout_min;
 }
 
 export function denyListFor(cfg: ForemanConfig, project: ProjectConfig): string[] {

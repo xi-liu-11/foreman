@@ -1,0 +1,13 @@
+16:steps:
+17-  plan           #1 done     architect     42m   $1.37 21t tab=w4:tV
+18-      I wrote and committed spec.md, plan.md and tasks.md in specs/t0045-per-step-timeout-budgets/ (commit 21c1112). Nothing was implemented or tested in this step; it is planning only.
+19-      
+20-      Timeout design:
+21-      - A pure function `stepTimeoutMin(defaults, project, step)` in src/config.ts picks the budget: the project's `step_timeouts[step]`, else the `[defaults]` `step_timeouts[step]`, else the global `step_timeout_min`.
+22-      - A second function, `parseStepTimeouts`, keeps only positive numbers and warns about the rest. It also stops the raw table leaking through the existing `{...DEFAULTS, ...raw.defaults}` spread.
+23-      - Inline tables and `[projects.x.step_timeouts]` sub-tables both work.
+24-      - taskd's `tryLaunch` writes the resolved budget into a new nullable `steps.timeout_min` column, added by an additive migration in `Store.migrate()`. Every worker launch, including retries, QA re-runs and resumes, goes through `tryLaunch`.
+25-      - The runner uses `step.timeout_min`, falling back to the global value when it is null, for both the kill timer and the `timeout after N min` text. taskd already copies that text into `steps.error`.
+26-      - `task show` adds `budget=Nmin` to running steps.
+27-      - taskd logs a warning at startup for any `step_timeouts` key that matches no pipeline step name, which catches typos like `tests`.
+28-      - Heartbeat and lease logic are unchanged.

@@ -51,6 +51,7 @@ export interface StepRow {
   error: string | null;
   cost_usd: number;
   turns: number;
+  timeout_min: number | null; // runner budget resolved at launch (null: launched before T0045, or a system step)
   created_at: string;
 }
 
@@ -130,6 +131,7 @@ CREATE TABLE IF NOT EXISTS steps (
   started_at TEXT, finished_at TEXT, lease_until TEXT,
   result TEXT, error TEXT,
   cost_usd REAL NOT NULL DEFAULT 0, turns INTEGER NOT NULL DEFAULT 0,
+  timeout_min INTEGER,
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS steps_task ON steps(task_id, name);
@@ -183,6 +185,8 @@ export class Store {
     if (!cols.has("pr_url")) this.db.exec("ALTER TABLE tasks ADD COLUMN pr_url TEXT");
     if (!cols.has("superseded_by")) this.db.exec("ALTER TABLE tasks ADD COLUMN superseded_by TEXT");
     if (!cols.has("plan_cycles")) this.db.exec("ALTER TABLE tasks ADD COLUMN plan_cycles INTEGER NOT NULL DEFAULT 0");
+    const stepCols = new Set((this.db.query("PRAGMA table_info(steps)").all() as { name: string }[]).map(c => c.name));
+    if (!stepCols.has("timeout_min")) this.db.exec("ALTER TABLE steps ADD COLUMN timeout_min INTEGER");
     if (!cols.has("rejection")) this.db.exec("ALTER TABLE tasks ADD COLUMN rejection TEXT");
   }
 
