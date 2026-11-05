@@ -1,0 +1,85 @@
+bun test v1.4.4 (38afee6c8)
+
+test/result-recovery.test.ts:
+01:47:33 lease expired for RR1/plan#2; applying the result event from transcript.jsonl
+01:47:33 result RR1/plan#2: done
+01:47:33 lease expired for RR2/plan#2: lease expired: runner stopped heartbeating
+01:47:33 lease expired for RR3/plan#2: lease expired: runner stopped heartbeating
+01:47:33 lease expired for RR4/plan#2; applying report.json left by the runner
+01:47:33 result RR4/plan#2: done
+
+test/launch.test.ts:
+01:47:33 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+01:47:33 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+01:47:33 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+01:47:33 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+01:47:35 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+01:47:35 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+01:47:36 started LT1/plan#1 (herdr tab, launch took 2s)
+01:47:36 lease expired for LT2/plan#1: lease expired: runner stopped heartbeating
+01:47:36 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+01:47:36 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+01:47:36 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+01:47:36 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+01:47:38 started LT3/plan#1 (herdr tab, launch took 2s)
+01:47:38 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+01:47:38 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+01:47:38 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+01:47:38 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+01:47:39 lease expired for LT4/plan#1: runner never started: launch timed out after 1s
+01:47:39 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+01:47:39 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+01:47:40 launch of LT4/plan#1 returned after the step stopped being live; closed the new tab
+01:47:40 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+01:47:40 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+01:47:40 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+01:47:40 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+01:47:40 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+01:47:40 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+01:47:40 failed LT5: step 'plan' could not start a runner 3 times: runner never started: herdr tab create failed (1): boom
+01:47:40 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+01:47:40 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+01:47:40 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+01:47:40 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+01:47:40 launch failed for LT7/plan#1: herdr tab create --workspace w1 --cwd /private/var/folders/7w/1mrvd9812138hkj9ndncqcvh0000gn/T/fm-launch-home-3kGuGP --label LT7 plan --no-focus --env FOREMAN_URL=http://127.0.0.1:7777 --env FOREMAN_TOKEN=11714801a8cd48b0badaf0ce9431724a --env FOREMAN_TASK=LT7 --env FOREMAN_STEP=21 --env FOREMAN_STEP_NAME=plan --env FOREMAN_HOME=/private/var/folders/7w/1mrvd9812138hkj9ndncqcvh0000gn/T/fm-launch-home-3kGuGP failed (1): boom
+01:47:40 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+01:47:40 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+01:47:40 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+01:47:40 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+01:47:40 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+01:47:40 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+01:47:41 started LT8/plan#1 (herdr tab, launch took 1s)
+01:47:41 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+01:47:41 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+01:47:43 lease expired for LT8/plan#1: lease expired: runner stopped heartbeating
+01:47:43 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+01:47:43 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+01:47:43 failed LT8: step 'plan' failed 1 times: lease expired: runner stopped heartbeating
+01:47:43 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+01:47:43 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+01:47:43 started LT9/plan#1 (herdr tab, launch took 0s)
+01:47:43 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+01:47:43 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+01:47:45 lease expired for LT9/plan#1: runner never started: no check-in within 1s of launch (launch took 0s)
+01:47:45 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+01:47:45 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+01:47:45 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+01:47:45 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+01:47:46 launch failed for LT10/plan#1: herdr tab create timed out after 1s
+01:47:46 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+01:47:46 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+01:47:46 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+01:47:46 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+
+test/stall.test.ts:
+01:47:46 tick gap 600s (host sleep or stall): extended 1 lease(s)
+01:47:46 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+01:47:46 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+01:47:46 lease expired for ST2/implement#1: lease expired: runner stopped heartbeating
+01:47:46 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+01:47:46 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+
+ 19 pass
+ 0 fail
+ 124 expect() calls
+Ran 19 tests across 4 files. [14.78s]

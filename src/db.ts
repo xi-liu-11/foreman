@@ -52,6 +52,9 @@ export interface StepRow {
   cost_usd: number;
   turns: number;
   timeout_min: number | null; // runner budget resolved at launch (null: launched before T0045, or a system step)
+  launch_started_at: string | null; // tryLaunch marked it running (null: launched before T0054)
+  launched_at: string | null;       // the herdr tab (or fallback process) is up
+  runner_seen_at: string | null;    // last heartbeat from the runner (null: never checked in)
   created_at: string;
 }
 
@@ -139,6 +142,7 @@ CREATE TABLE IF NOT EXISTS steps (
   result TEXT, error TEXT,
   cost_usd REAL NOT NULL DEFAULT 0, turns INTEGER NOT NULL DEFAULT 0,
   timeout_min INTEGER,
+  launch_started_at TEXT, launched_at TEXT, runner_seen_at TEXT,
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS steps_task ON steps(task_id, name);
@@ -195,6 +199,8 @@ export class Store {
     if (!cols.has("plan_cycles")) this.db.exec("ALTER TABLE tasks ADD COLUMN plan_cycles INTEGER NOT NULL DEFAULT 0");
     const stepCols = new Set((this.db.query("PRAGMA table_info(steps)").all() as { name: string }[]).map(c => c.name));
     if (!stepCols.has("timeout_min")) this.db.exec("ALTER TABLE steps ADD COLUMN timeout_min INTEGER");
+    for (const c of ["launch_started_at", "launched_at", "runner_seen_at"])
+      if (!stepCols.has(c)) this.db.exec(`ALTER TABLE steps ADD COLUMN ${c} TEXT`);
     if (!cols.has("rejection")) this.db.exec("ALTER TABLE tasks ADD COLUMN rejection TEXT");
     const leaseCols = new Set((this.db.query("PRAGMA table_info(resource_leases)").all() as { name: string }[]).map(c => c.name));
     if (!leaseCols.has("expect_min")) this.db.exec("ALTER TABLE resource_leases ADD COLUMN expect_min INTEGER");

@@ -9,8 +9,12 @@
 // - Before expiring a lease, a report.json left by the runner is applied as its result.
 // - Multi-write state changes run inside a transaction; herdr side effects come after.
 // - Resume after an answer happens in the scheduler, not in the HTTP handler.
+// - The heartbeat lease is armed when the launch returns or the runner checks in, not before;
+//   until then the step has launch_grace_sec. Attempts whose runner never started are not
+//   counted against max_attempts (launch_attempts_max bounds them instead).
+// - A tick gap longer than 2 x heartbeat_sec (host sleep, stall) extends every running lease.
 import { join } from "node:path";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { Store, CLOSED_STATUSES, type TaskRow, type StepRow, now } from "./db";
 import { loadConfig, denyListFor, stepTimeoutMin, deviceResources, REPO_ROOT, RUNS_DIR, type ForemanConfig, type ProjectConfig } from "./config";
 import { requestLease, releaseLease, releaseStepLeases, reconcileLeases, leaseView, devicePrompt, dispatchView, laneViews, laneStatusForTask, type GroupsOf } from "./leases";
@@ -25,6 +29,10 @@ const store = new Store();
 let herdrOk = false;
 const cancelRequested = new Set<number>(); // step ids whose runner should stop
 let ticking = false;
+let lastTickStart: number | null = null; // wall time the previous tick started (stall detection)
+// Launches in flight (herdr calls), outside the tick. The step is already 'running', so concurrency counts it.
+const launching = new Map<number, Promise<void>>();
+herdr.setTimeoutSec(cfg.defaults.herdr_timeout_sec);
 
 const log = (...a: unknown[]) => console.log(new Date().toISOString().slice(11, 19), ...a);
 const slugify = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48) || "task";
@@ -51,6 +59,10 @@ const isLive = (step: StepRow) => {
   const task = store.getTask(step.task_id);
   return step.status === "running" && store.latestStep(step.task_id, step.name)?.id === step.id && Boolean(task && ["running", "queued", "blocked"].includes(task.status));
 };
+// A failed attempt whose runner never checked in: not counted against max_attempts.
+const NEVER_STARTED = "runner never started";
+const isNeverStarted = (s: StepRow) => s.status === "failed" && !s.runner_seen_at && Boolean(s.error?.startsWith(NEVER_STARTED));
+const secsSince = (iso: string, to = Date.now()) => Math.round((to - Date.parse(iso)) / 1000);
 
 // ---------------------------------------------------------------- tickets
 // Ticket side effects are best-effort: they are logged as events and never
@@ -95,42 +107,107 @@ function failureCount(task_id: string, name: string): number {
   const rows = store.stepsForTask(task_id).filter(s => s.name === name);
   let count = 0;
   for (const s of rows) {
-    if (s.status === "failed") count++;
+    if (s.status === "failed" && !isNeverStarted(s)) count++;
     if (s.resume_prompt?.startsWith("[user-retry]")) count = 0;
   }
   return count;
 }
 
+// Trailing run of never-started attempts of a step, back to (and including) the last user retry.
+function neverStartedStreak(task_id: string, name: string): number {
+  const rows = store.stepsForTask(task_id).filter(s => s.name === name);
+  let n = 0;
+  for (let i = rows.length - 1; i >= 0 && isNeverStarted(rows[i]); i--) {
+    n++;
+    if (rows[i].resume_prompt?.startsWith("[user-retry]")) break;
+  }
+  return n;
+}
+
 // ---------------------------------------------------------------- scheduler
+
+// The runner's final result event, if the last parseable line of transcript.jsonl is one.
+// The run dir is per attempt, so this can only be this attempt's result.
+function resultFromTranscript(runDir: string): any | null {
+  const path = join(runDir, "transcript.jsonl");
+  if (!existsSync(path)) return null;
+  const lines = readFileSync(path, "utf8").split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (!lines[i].trim()) continue;
+    let ev: any;
+    try { ev = JSON.parse(lines[i]); } catch { continue; } // truncated line
+    return ev?.type === "result" ? ev : null;
+  }
+  return null;
+}
 
 async function expireLeases(): Promise<void> {
   for (const s of store.runningSteps()) {
     if (!s.lease_until || s.lease_until >= now()) continue;
     const task = store.getTask(s.task_id)!;
+    const runDir = runDirFor(task, s);
     // R4 fallback: the runner may have finished but failed to deliver its result.
-    const reportPath = join(runDirFor(task, s), "report.json");
+    const reportPath = join(runDir, "report.json");
     if (existsSync(reportPath)) {
       try {
         const body = JSON.parse(readFileSync(reportPath, "utf8"));
         log(`lease expired for ${s.task_id}/${s.name}#${s.attempt}; applying report.json left by the runner`);
-        store.event("step.result_recovered", { step: s.name, attempt: s.attempt }, s.task_id, s.id);
+        store.event("step.result_recovered", { step: s.name, attempt: s.attempt, source: "report" }, s.task_id, s.id);
         await handleResult(s, body);
         continue;
       } catch (e: any) { log(`report.json unreadable for ${s.task_id}/${s.name}#${s.attempt}: ${e.message}`); }
     }
-    log(`lease expired for ${s.task_id}/${s.name}#${s.attempt}`);
-    store.updateStep(s.id, { status: "failed", finished_at: now(), error: "lease expired: runner stopped heartbeating" });
-    store.event("step.lease_expired", { step: s.name, attempt: s.attempt }, s.task_id, s.id);
-    releaseStepLeases(store, s.id, "heartbeat lease expired", groupsOf);
+    // The run finished but its tab died (or the host slept) before report.json was written.
+    const ev = resultFromTranscript(runDir);
+    if (ev) {
+      const body = { exit_code: 0, killed: null, session_id: ev.session_id ?? s.session_id, result: ev, stderr_tail: "", run_dir: runDir, recovered_from: "transcript" };
+      try { writeFileSync(reportPath, JSON.stringify(body, null, 2)); } catch (e: any) { log(`could not write ${reportPath}: ${e.message}`); }
+      log(`lease expired for ${s.task_id}/${s.name}#${s.attempt}; applying the result event from transcript.jsonl`);
+      store.event("step.result_recovered", { step: s.name, attempt: s.attempt, source: "transcript" }, s.task_id, s.id);
+      await handleResult(s, body);
+      continue;
+    }
+    // Rows launched before T0054 have no launch_started_at and keep the old classification.
+    let error = "lease expired: runner stopped heartbeating";
+    if (!s.runner_seen_at && s.launch_started_at) {
+      error = s.launched_at
+        ? `${NEVER_STARTED}: no check-in within ${cfg.defaults.lease_sec}s of launch (launch took ${secsSince(s.launch_started_at, Date.parse(s.launched_at))}s)`
+        : `${NEVER_STARTED}: launch timed out after ${secsSince(s.launch_started_at)}s`;
+    }
+    const never = error.startsWith(NEVER_STARTED);
+    log(`lease expired for ${s.task_id}/${s.name}#${s.attempt}: ${error}`);
+    tx(() => {
+      store.updateStep(s.id, { status: "failed", finished_at: now(), error });
+      store.event(never ? "step.never_started" : "step.lease_expired", { step: s.name, attempt: s.attempt, ...(never ? { error } : {}) }, s.task_id, s.id);
+      releaseStepLeases(store, s.id, "heartbeat lease expired", groupsOf);
+    });
     cancelRequested.add(s.id);
-    if (s.tab_id) await herdr.closeTab(s.tab_id, s.machine);
+    // Bounded by the herdr timeout; not awaited so one dead tab cannot hold the tick.
+    if (s.tab_id) void herdr.closeTab(s.tab_id, s.machine);
   }
+}
+
+// Shared by startup (R3) and tick-gap recovery. Returns how many leases moved.
+function extendRunningLeases(newUntil: (s: StepRow) => string): number {
+  const live = store.runningSteps();
+  tx(() => { for (const s of live) store.updateStep(s.id, { lease_until: newUntil(s) }); });
+  return live.length;
 }
 
 export async function tick(): Promise<void> {
   if (ticking) return;
   ticking = true;
   try {
+    // S5: a long gap since the last tick (host sleep, or a stalled tick) is not the runners' fault.
+    const start = Date.now();
+    const gap = lastTickStart === null ? 0 : start - lastTickStart;
+    lastTickStart = start;
+    if (gap > 2 * cfg.defaults.heartbeat_sec * 1000) {
+      const extended = extendRunningLeases(s => new Date((s.lease_until ? Date.parse(s.lease_until) : start) + gap).toISOString());
+      const gap_sec = Math.round(gap / 1000);
+      log(`tick gap ${gap_sec}s (host sleep or stall): extended ${extended} lease(s)`);
+      store.event("taskd.stall", { gap_sec, extended });
+    }
     await expireLeases();
     for (const id of deferred.keys()) if (store.getStep(id)?.status !== "queued") deferred.delete(id);
     try { reconcileLeases(store, leaseMaxMin, groupsOf); }
@@ -357,6 +434,12 @@ async function settle(task: TaskRow, latest: StepRow, role: string, onDone: () =
     }
     case "failed": {
       if (isStopped(task)) return;
+      if (isNeverStarted(latest)) {
+        // Nothing ran, so relaunch the same attempt content: same session and resume prompt.
+        const streak = neverStartedStreak(task.id, latest.name);
+        if (streak >= cfg.defaults.launch_attempts_max) return failTask(task, `step '${latest.name}' could not start a runner ${streak} times: ${latest.error}`);
+        return createStep(task, latest.name, role, latest.attempt + 1, latest.session_id, latest.resume_prompt?.replace(/^\[user-retry\]\s*/, "") || null);
+      }
       const failures = failureCount(task.id, latest.name);
       if (failures >= cfg.defaults.max_attempts) return failTask(task, `step '${latest.name}' failed ${failures} times: ${latest.error ?? "unknown error"}`);
       const resume = latest.session_id
@@ -398,10 +481,17 @@ async function tryLaunch(task: TaskRow, step: StepRow): Promise<void> {
   const cwd = task.worktree ?? proj.path;
   if (!existsSync(cwd)) { store.updateStep(step.id, { status: "failed", finished_at: now(), error: `cwd missing: ${cwd}` }); return; }
 
+  // S1: the heartbeat lease is not armed yet; the launch has launch_grace_sec to return.
+  const startedAt = now();
   tx(() => {
-    store.updateStep(step.id, { status: "running", started_at: now(), lease_until: addSeconds(cfg.defaults.lease_sec), timeout_min: stepTimeoutMin(cfg.defaults, proj, step.name) });
+    store.updateStep(step.id, { status: "running", started_at: startedAt, launch_started_at: startedAt, lease_until: addSeconds(cfg.defaults.launch_grace_sec), timeout_min: stepTimeoutMin(cfg.defaults, proj, step.name) });
     store.updateTask(task.id, { status: "running" });
   });
+  // S4: herdr can take minutes under load; the tick must not wait for it.
+  launching.set(step.id, launch(task, step, proj, cwd).finally(() => launching.delete(step.id)));
+}
+
+async function launch(task: TaskRow, step: StepRow, proj: ProjectConfig, cwd: string): Promise<void> {
   const env: Record<string, string> = {
     FOREMAN_URL: `http://${cfg.server.bind === "0.0.0.0" ? "127.0.0.1" : cfg.server.bind}:${cfg.server.port}`,
     FOREMAN_TOKEN: cfg.server.token,
@@ -415,11 +505,12 @@ async function tryLaunch(task: TaskRow, step: StepRow): Promise<void> {
   if (process.env.FOREMAN_CLAUDE_BIN) env.FOREMAN_CLAUDE_BIN = process.env.FOREMAN_CLAUDE_BIN;
   if (process.env.FOREMAN_HOME) env.FOREMAN_HOME = process.env.FOREMAN_HOME;
   const command = [join(REPO_ROOT, "bin", "foreman"), "run-step", String(step.id)];
+  const viaHerdr = herdrOk;
   try {
-    if (herdrOk) {
+    let pane: herdr.HerdrPane | null = null;
+    if (viaHerdr) {
       const ws = await herdr.ensureWorkspace(`fm:${task.project}`, proj.path, proj.machine);
-      const pane = await herdr.launchInTab({ workspace_id: ws, label: `${task.id} ${step.name}`, cwd, env, command, machine: proj.machine });
-      store.updateStep(step.id, { workspace_id: pane.workspace_id, tab_id: pane.tab_id, pane_id: pane.pane_id });
+      pane = await herdr.launchInTab({ workspace_id: ws, label: `${task.id} ${step.name}`, cwd, env, command, machine: proj.machine });
     } else {
       // Fallback without herdr. Known limitation: the child shares taskd's process
       // group, so a Ctrl-C on taskd also interrupts it (macOS has no setsid).
@@ -428,12 +519,32 @@ async function tryLaunch(task: TaskRow, step: StepRow): Promise<void> {
       const out = Bun.file(join(runDir, "console.log"));
       Bun.spawn(command, { cwd, env: { ...process.env, ...env }, stdout: out, stderr: out, stdin: "ignore" }).unref();
     }
-    store.event("step.started", { step: step.name, attempt: step.attempt, herdr: herdrOk }, task.id, step.id);
-    log(`started ${task.id}/${step.name}#${step.attempt} (${herdrOk ? "herdr tab" : "background process"})`);
+    const fresh = store.getStep(step.id);
+    if (!fresh || !isLive(fresh)) {
+      // Expired, cancelled or failed while the launch was in flight; its runner would only be told to stop.
+      if (pane) void herdr.closeTab(pane.tab_id, proj.machine);
+      log(`launch of ${task.id}/${step.name}#${step.attempt} returned after the step stopped being live; closed the new tab`);
+      return;
+    }
+    store.updateStep(step.id, {
+      launched_at: now(), lease_until: addSeconds(cfg.defaults.lease_sec),
+      ...(pane ? { workspace_id: pane.workspace_id, tab_id: pane.tab_id, pane_id: pane.pane_id } : {}),
+    });
+    store.event("step.started", { step: step.name, attempt: step.attempt, herdr: viaHerdr }, task.id, step.id);
+    log(`started ${task.id}/${step.name}#${step.attempt} (${viaHerdr ? "herdr tab" : "background process"}, launch took ${secsSince(fresh.launch_started_at ?? fresh.started_at ?? now())}s)`);
   } catch (e: any) {
-    store.updateStep(step.id, { status: "failed", finished_at: now(), error: `launch failed: ${e.message}` });
-    store.event("step.launch_failed", { error: e.message }, task.id, step.id);
+    const fresh = store.getStep(step.id);
+    if (!fresh || !isLive(fresh)) return;
+    const error = `${NEVER_STARTED}: ${e.message}`;
+    tx(() => {
+      store.updateStep(step.id, { status: "failed", finished_at: now(), error });
+      store.event("step.never_started", { step: step.name, attempt: step.attempt, error }, task.id, step.id);
+      store.event("step.launch_failed", { error: e.message }, task.id, step.id);
+      releaseStepLeases(store, step.id, "launch failed", groupsOf);
+    });
+    log(`launch failed for ${task.id}/${step.name}#${step.attempt}: ${e.message}`);
   }
+  setTimeout(tick, 50);
 }
 
 async function finishTask(task: TaskRow): Promise<void> {
@@ -878,7 +989,7 @@ export async function route(req: Request): Promise<Response> {
     const step = store.getStep(Number(mm[1])); if (!step) return bad("no such step", 404);
     // R2: anything that is not the current running attempt of an active task must stop.
     const stale = !isLive(step);
-    if (!stale) store.updateStep(step.id, { lease_until: addSeconds(cfg.defaults.lease_sec) });
+    if (!stale) store.updateStep(step.id, { lease_until: addSeconds(cfg.defaults.lease_sec), runner_seen_at: now() });
     return json({ ok: true, cancel: stale || cancelRequested.has(step.id) });
   }
   if ((mm = m(/^\/steps\/(\d+)\/lease$/)) && req.method === "POST") {
@@ -958,14 +1069,18 @@ export function unknownDeviceSteps(c: ForemanConfig): { key: string; where: stri
   return Object.values(c.projects).flatMap(p => p.device_steps.filter(k => !names.has(k)).map(key => ({ key, where: `projects.${p.name}` })));
 }
 
+// For tests only.
+export const testHooks = {
+  setHerdrOk(v: boolean) { herdrOk = v; },
+  setLastTickStart(ms: number | null) { lastTickStart = ms; },
+  launchesSettled: () => Promise.allSettled([...launching.values()]),
+};
+
 export async function main(): Promise<void> {
   herdrOk = await herdr.herdrAvailable();
   // R3: a long outage must not expire every live lease on the first tick.
-  const live = store.runningSteps();
-  if (live.length) {
-    for (const s of live) store.updateStep(s.id, { lease_until: addSeconds(cfg.defaults.lease_sec) });
-    log(`startup: extended ${live.length} running lease(s) by ${cfg.defaults.lease_sec}s`);
-  }
+  const extended = extendRunningLeases(() => addSeconds(cfg.defaults.lease_sec));
+  if (extended) log(`startup: extended ${extended} running lease(s) by ${cfg.defaults.lease_sec}s`);
   for (const { key, where } of unknownTimeoutKeys(cfg)) log(`config: step_timeouts key '${key}' (${where}) matches no pipeline step`);
   for (const { key, where } of unknownDeviceSteps(cfg)) log(`config: device_steps '${key}' (${where}) matches no pipeline step`);
   const server = Bun.serve({

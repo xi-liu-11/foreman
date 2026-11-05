@@ -6,11 +6,33 @@ function herdrArgs(machine?: string | null): string[] {
   return machine ? ["herdr", "--machine", machine] : ["herdr"];
 }
 
-async function run(args: string[]): Promise<any> {
+// Every call is bounded so a wedged herdr cannot hold a launch (or the tick) forever.
+let timeoutSec = 120;
+export function setTimeoutSec(n: number): void { timeoutSec = n; }
+
+// "tab create", "pane run", ...: the subcommand pair after `herdr [--machine X]`.
+function callName(args: string[]): string {
+  const rest = args[1] === "--machine" ? args.slice(3) : args.slice(1);
+  return rest.slice(0, 2).join(" ");
+}
+
+async function run(args: string[], timeoutMs = timeoutSec * 1000): Promise<any> {
   const proc = Bun.spawn(args, { stdout: "pipe", stderr: "pipe", env: { ...process.env } });
-  const [out, err, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
-  if (code !== 0) throw new Error(`${args.join(" ")} failed (${code}): ${err.trim() || out.trim()}`);
-  try { return JSON.parse(out); } catch { return out; }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      proc.kill();
+      reject(new Error(`herdr ${callName(args)} timed out after ${Math.round(timeoutMs / 1000)}s`));
+    }, timeoutMs);
+  });
+  try {
+    const [out, err, code] = await Promise.race([
+      Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]),
+      timedOut,
+    ]);
+    if (code !== 0) throw new Error(`${args.join(" ")} failed (${code}): ${err.trim() || out.trim()}`);
+    try { return JSON.parse(out); } catch { return out; }
+  } finally { clearTimeout(timer); }
 }
 
 export async function herdrAvailable(machine?: string | null): Promise<boolean> {
@@ -45,7 +67,8 @@ export async function launchInTab(opts: {
   const tab_id = r?.result?.tab?.tab_id ?? r?.result?.tab?.id;
   const pane_id = r?.result?.root_pane?.pane_id ?? r?.result?.root_pane?.id;
   if (!tab_id || !pane_id) throw new Error(`tab create returned no ids: ${JSON.stringify(r)}`);
-  await run([...herdrArgs(opts.machine), "pane", "run", pane_id, ...opts.command]);
+  try { await run([...herdrArgs(opts.machine), "pane", "run", pane_id, ...opts.command]); }
+  catch (e) { await closeTab(tab_id, opts.machine); throw e; }
   return { workspace_id: opts.workspace_id, tab_id, pane_id };
 }
 

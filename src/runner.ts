@@ -21,6 +21,12 @@ export async function runStep(stepId: number): Promise<void> {
   const client = TaskdClient.fromEnvOrConfig();
   const ctx: StepContext = await client.get(`/steps/${stepId}/context`);
   const { step, task, project, defaults } = ctx;
+  // Check in before anything else: taskd arms the heartbeat lease and records
+  // that the runner started. A failure here is retried by the periodic heartbeat.
+  try {
+    const r = await client.post(`/steps/${step.id}/heartbeat`, {});
+    if (r?.cancel) { console.log(`\x1b[33mtaskd says this attempt is no longer live; not starting.\x1b[0m`); return; }
+  } catch (e: any) { console.error(`\x1b[33mcheck-in failed: ${e.message}\x1b[0m`); }
   const runDir = join(RUNS_DIR, task.id, `${step.name}-${step.attempt}`);
   mkdirSync(runDir, { recursive: true });
   const cwd = task.worktree ?? project.path;

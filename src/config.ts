@@ -54,6 +54,9 @@ export interface Defaults {
   concurrency: number;
   heartbeat_sec: number;
   lease_sec: number;
+  launch_grace_sec: number;    // a launch that has not returned by then is failed as never started
+  launch_attempts_max: number; // consecutive never-started attempts before the task fails
+  herdr_timeout_sec: number;   // per herdr CLI call
   deny: string[];
   worktrees: string;
   run_retention_days: number;
@@ -101,6 +104,9 @@ const DEFAULTS: Defaults = {
   concurrency: 3,
   heartbeat_sec: 30,
   lease_sec: 150,
+  launch_grace_sec: 600,
+  launch_attempts_max: 3,
+  herdr_timeout_sec: 120,
   deny: [],
   worktrees: "~/git/.worktrees",
   run_retention_days: 30,
@@ -134,6 +140,9 @@ max_plan_cycles = 2   # plan QA reviews per round before the plan goes to the ga
 concurrency = 3
 heartbeat_sec = 30
 lease_sec = 150
+launch_grace_sec = 600     # launch deadline; a step whose runner never started does not count against max_attempts
+launch_attempts_max = 3    # ...but this many never-started attempts in a row fail the task
+herdr_timeout_sec = 120    # per herdr CLI call
 worktrees = "~/git/.worktrees"
 run_retention_days = 30
 lease_max_minutes = 45   # resource lease (task lease) held longer than this is flagged overdue

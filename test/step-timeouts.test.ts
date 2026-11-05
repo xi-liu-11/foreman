@@ -102,8 +102,11 @@ CREATE TABLE steps (
   old.close();
   const store = new Store(path);
   const after = store.getStep(before.id)!;
-  expect({ ...after, timeout_min: undefined }).toEqual({ ...before, timeout_min: undefined });
+  // T0054 adds launch_started_at, launched_at and runner_seen_at the same way.
+  const added = { timeout_min: undefined, launch_started_at: undefined, launched_at: undefined, runner_seen_at: undefined };
+  expect({ ...after, ...added }).toEqual({ ...before, ...added });
   expect(after.timeout_min).toBeNull();
+  expect([after.launch_started_at, after.launched_at, after.runner_seen_at]).toEqual([null, null, null]);
   expect(store.getTask("OLD1")!.title).toBe("t");
   store.updateStep(before.id, { timeout_min: 120 });
   expect(store.getStep(before.id)!.timeout_min).toBe(120);

@@ -212,6 +212,49 @@ A running taskd must be restarted to pick up the early-end flag
 (`foreman service restart`, check `task ls --all` first). Prompt changes apply
 to the next step launched.
 
+### Launch and leases
+
+Launching a step and keeping its heartbeat lease are built to survive a slow
+host and a Mac that sleeps. When a step is picked up, taskd marks it running and
+records `launch_started_at`. At that point it gives the step a launch deadline
+(`[defaults] launch_grace_sec`, default 600) instead of the heartbeat lease. The
+herdr calls (workspace, `tab create`, `pane run`) then run outside the tick, so
+heartbeats, lease grants and the API keep being served while a tab opens. The
+launching step still counts toward concurrency. The heartbeat lease
+(`lease_sec`) is armed when the launch returns or when the runner first checks
+in, whichever comes first. The runner checks in with one heartbeat right after
+it fetches its context, before it creates the run dir.
+
+Each herdr CLI call has a timeout (`herdr_timeout_sec`, default 120). An attempt
+whose runner never started fails with one of these errors:
+
+- `runner never started: launch timed out after <N>s` (the launch did not return within the grace)
+- `runner never started: <herdr error>`, such as `herdr tab create timed out after 120s`
+- `runner never started: no check-in within <lease_sec>s of launch (launch took <M>s)`
+
+These attempts do not count against `max_attempts`. taskd relaunches them with
+the same session and resume prompt. Their own bound is `launch_attempts_max`
+(default 3) in a row, counted since the last `task retry`. Once a step reaches
+it, the task fails with `step '<name>' could not start a runner <N> times: …`. A
+runner that checked in and then went quiet keeps the error `lease expired: runner
+stopped heartbeating`, and that one counts.
+
+If two ticks are more than `2 × heartbeat_sec` apart (host sleep, or a stalled
+taskd), every running lease is extended by the gap before any lease is expired.
+taskd logs `tick gap <N>s` and records a `taskd.stall` event. When a lease does
+expire and the runner left no `report.json`, but `transcript.jsonl` ends with
+the `result` event, taskd writes `report.json` from it
+(`recovered_from: "transcript"`) and completes the step with its real summary,
+cost and turns.
+
+`task show` prints `runner seen <ago> ago` or `runner not seen yet (launch
+started <ago> ago)` under each running step.
+
+A running taskd must be restarted to pick this up (`foreman service restart`).
+The restart is safe while steps run: the migration only adds columns, startup
+extends every running lease, and runners started by the old taskd check in on
+their next heartbeat.
+
 ### Resource leases
 
 A resource lease is an exclusive, named hold on a shared device (a simulator, an
