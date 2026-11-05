@@ -1,0 +1,22 @@
+tasks=57 closed=54 needs=0
+old Recent (pre-fix): T0001 T0002 T0003 T0004 T0005 T0006 T0007 T0008 T0009 T0010 T0011 T0012 T0013 T0014 T0015
+new Recent rows:
+  T0057  done       finished 2026-11-05T04:13:23.694Z  age=14m  (created 2h ago)  Cost accounting on top of the dashboard and launch
+  T0055  superseded finished 2026-11-05T02:06:36.706Z  age=2h  (created 3h ago)  Cost accounting: per-attempt deltas, estimate on k
+  T0050  done       finished 2026-11-05T02:04:15.146Z  age=2h  (created 5h ago)  Dashboard: collapsed one-line cards, Decision bloc
+  T0054  done       finished 2026-11-05T01:48:23.019Z  age=3h  (created 3h ago)  Launch and leases: arm lease after launch, runner 
+  T0043  superseded finished 2026-11-05T01:26:29.916Z  age=3h  (created 1d ago)  Misses: log the fish that got away (no photos)
+  T0053  done       finished 2026-11-05T01:10:38.413Z  age=3h  (created 3h ago)  Steps die before the runner starts under load (lea
+  T0051  done       finished 2026-11-05T01:02:47.744Z  age=3h  (created 4h ago)  Revise trail and debrief designs after the user's 
+  T0039  done       finished 2026-11-05T01:02:43.990Z  age=3h  (created 1d ago)  Sessions required: start-time prompt, continue-or-
+  T0052  cancelled  finished 2026-11-05T00:59:45.272Z  age=3h  (created 3h ago)  Android check for 045 (part 2): run flow 35, Conti
+  T0049  done       finished 2026-11-05T00:57:02.258Z  age=4h  (created 5h ago)  Android check for sessions required (045): Continu
+  T0046  done       finished 2026-11-04T20:43:27.873Z  age=8h  (created 22h ago)  Docs: implement runs only touched flows; full suit
+  T0037  done       finished 2026-11-04T20:43:05.085Z  age=8h  (created 1d ago)  Share photos into Tackle Tally (import via share s
+  T0038  done       finished 2026-11-04T14:14:43.584Z  age=14h  (created 1d ago)  Assistant: single Mate voice, characters hidden be
+  T0044  done       finished 2026-11-04T13:47:24.195Z  age=15h  (created 24h ago)  Design: session location trail (background samplin
+  T0042  done       finished 2026-11-04T13:42:35.085Z  age=15h  (created 1d ago)  Design: AI session debrief with review-and-accept 
+matches independent expectation: true; first row T0057 == newest finished T0057: true
+no active in Recent: true; no needs in Recent: true
+scenario 5 age cell (created 5d, finished 1h): 1h
+exit=0

@@ -1,0 +1,10 @@
+$ git diff main --stat -- src bin test
+ src/dashboard.html            |  6 ++++--
+ test/dashboard-recent.test.ts | 42 ++++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 46 insertions(+), 2 deletions(-)
+
+$ git diff main -- src/db.ts src/taskd.ts src/cli.ts bin | wc -l
+       0
+
+$ grep ORDER BY src/db.ts:276
+    const sql = `SELECT * FROM tasks ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY priority ASC, created_at ASC`;

@@ -101,6 +101,8 @@ const ago = iso => { if (!iso) return ""; const s = Math.max(0, (Date.now() - Da
 const dur = (a, b) => { if (!a) return ""; const s = ((b ? Date.parse(b) : Date.now()) - Date.parse(a)) / 1000; return s < 60 ? Math.round(s) + "s" : Math.round(s / 60) + "m"; };
 const secs = n => { const s = Math.max(0, Number(n) || 0); return s < 60 ? Math.round(s) + "s" : s < 3600 ? Math.round(s / 60) + "m" : Math.round(s / 3600) + "h"; };
 const money = (n, est, unk) => { n = Number(n || 0); est = est || 0; unk = unk || 0; return n === 0 && unk > 0 ? "$?" : (est > 0 || unk > 0) && n > 0 ? "~$" + n.toFixed(2) : "$" + n.toFixed(2); };
+// Recent: closed tasks, newest finished first. Keep on one line: test/dashboard-recent.test.ts extracts it by prefix.
+const recentTasks = (tasks, exclude = []) => tasks.filter(t => ["done", "failed", "cancelled", "superseded"].includes(t.status) && !exclude.includes(t)).sort((a, b) => Date.parse(b.updated_at || b.created_at) - Date.parse(a.updated_at || a.created_at)).slice(0, 15);
 
 function pipelineSteps(t, steps) {
   const names = JSON.parse(t.pipeline).map(s => s.type === "parallel" ? s.children.map(c => c.name) : [s.name]).flat();
@@ -199,8 +201,8 @@ async function refresh() {
     const ids = new Set(all.map(t => t.id)); let pruned = false;
     for (const id of [...open]) if (!ids.has(id)) { open.delete(id); pruned = true; }
     if (pruned) save();
-    const recent = all.filter(t => !active.includes(t) && !needs.includes(t)).slice(0, 15);
-    document.getElementById("recent").innerHTML = recent.length ? `<table><tr><th>id</th><th>status</th><th>project</th><th>kind</th><th>age</th><th>cost</th><th>title</th></tr>${recent.map(t => `<tr><td class="id">${t.id}</td><td><span class="badge ${t.status}">${t.superseded_by ? "superseded→" + t.superseded_by : t.status}</span></td><td>${esc(t.project)}</td><td>${t.kind}</td><td>${ago(t.created_at)}</td><td>${money(t.cost_usd, t.cost_estimated, t.cost_unknown)}</td><td>${esc(t.title)}</td></tr>`).join("")}</table>` : `<span class="empty">none</span>`;
+    const recent = recentTasks(all, needs);
+    document.getElementById("recent").innerHTML = recent.length ? `<table><tr><th>id</th><th>status</th><th>project</th><th>kind</th><th>age</th><th>cost</th><th>title</th></tr>${recent.map(t => `<tr><td class="id">${t.id}</td><td><span class="badge ${t.status}">${t.superseded_by ? "superseded→" + t.superseded_by : t.status}</span></td><td>${esc(t.project)}</td><td>${t.kind}</td><td>${ago(t.updated_at || t.created_at)}</td><td>${money(t.cost_usd, t.cost_estimated, t.cost_unknown)}</td><td>${esc(t.title)}</td></tr>`).join("")}</table>` : `<span class="empty">none</span>`;
     const running = all.filter(t => t.status === "running").length;
     const failed = all.filter(t => t.status === "failed").length;
     const superseded = all.filter(t => t.status === "superseded").length;
