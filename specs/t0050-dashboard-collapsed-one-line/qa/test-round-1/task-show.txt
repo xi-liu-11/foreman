@@ -1,0 +1,86 @@
+===== task show T0001
+T0001 [implement] Dashboard: collapsed one-line cards, Decision block separate from Activity
+status: gate   project: demo   step: merge_approved   qa cycles: 2   plan cycles: 0
+gate: Approve merge
+worktree: /tmp/fm-t0050-qa/home/wt (fm/t0001-dash)
+decision: Merge: Cards collapse to one line and gates show a Decision block.
+  QA cycles: 3
+  Cost: $3.20
+  review: pass — No blocking findings.
+  test: pass — 161 tests pass.
+  Summary:
+    Cards collapse to one line and gates show a Decision block. Activity stays separate & readable.
+    
+    - **Collapsed** rows with `localStorage` state
+    - Decision built by `src/decision.ts`
+  Risk:
+    Low. A "quoted" <script>alert('xss')</script> & ampersand should show literally.
+  Follow-ups:
+    - Strip table pipes in findings
+    - Restart taskd
+  run: task approve T0001
+  run: task reject T0001 "<feedback>"
+brief:
+===== task show T0002
+T0002 [implement] Merge gate with worktree gone
+status: gate   project: demo   step: merge_approved   qa cycles: 1   plan cycles: 0
+gate: Approve merge
+worktree: /tmp/fm-t0050-qa/home/gone (null)
+decision: Merge: Fallback summary from the handoff step.
+  QA cycles: 2
+  Cost: $3.20
+  review: pass — review ok
+  test: pass — test ok
+  Handoff summary:
+    Fallback summary from the handoff step. Second sentence.
+  run: task approve T0002
+  run: task reject T0002 "<feedback>"
+brief:
+===== task show T0003
+T0003 [implement] Retry policy for flaky device steps
+status: gate   project: demo   step: plan_approved   qa cycles: 0   plan cycles: 2
+gate: Approve the plan — plan QA still fails after 2 review(s); see specs/g/qa/plan-review.md
+worktree: /tmp/fm-t0050-qa/home/wt2 (null)
+decision: Plan: Add a retry budget per step class.
+  ! Plan QA still fails after 2 review(s) (max 2).
+  Cost: $2.40
+  plan_qa: fail — C1 HIGH still open.
+  Plan:
+    Add a retry budget per step class. Backoff 30s.
+  findings:
+    - C1 HIGH: retry path missing for device steps
+    - H2 MEDIUM: backoff not bounded
+  run: task approve T0003
+  run: task reject T0003 "<feedback>"
+brief:
+===== task show T0004
+T0004 [implement] Choose the lane policy for <script>alert(1)</script> devices
+status: blocked   project: demo   step: plan   qa cycles: 0   plan cycles: 0
+decision: Question: Which grant order should the lane use? "quotes" & amp
+  Block: 1
+  Block 1:
+    Which grant order should the lane use? "quotes" & amp
+    (A) FIFO by request time
+    (B) Priority, then FIFO
+    (C) <script>alert('x')</script> shortest hold first
+  run: task answer 1 "<text>"
+brief:
+===== task show T0005
+T0005 [implement] Migrate tickets provider to v2 API
+status: failed   project: demo   step: implement   qa cycles: 0   plan cycles: 0
+decision: Failed: step 'implement' failed 3 times: lease expired: runner stopped heartbeating
+  Step: implement
+  Attempt: #3
+  Cost: $1.60
+  Error:
+    step 'implement' failed 3 times: lease expired: runner stopped heartbeating
+  run: task retry T0005
+  run: task retry T0005 --fresh
+brief:
+===== task show T0007
+T0007 [implement] Fix flaky lease test
+status: running   project: demo   step: implement   qa cycles: 0   plan cycles: 0
+brief:
+T0007 [implement] Fix flaky lease test
+status: running   project: demo   step: implement   qa cycles: 0   plan cycles: 0
+brief:

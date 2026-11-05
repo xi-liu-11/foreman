@@ -148,6 +148,15 @@ async function taskMain(): Promise<void> {
           t.worktree ? `worktree: ${t.worktree} (${t.branch})` : "",
           t.ticket ? `ticket: ${t.ticket}` : "",
           t.pr_url ? `pr: ${t.pr_url}` : "",
+          ...(d.decision ? [
+            `decision: ${d.decision.lead}`,
+            d.decision.warning ? `  ! ${d.decision.warning}` : "",
+            ...d.decision.facts.map((f: any) => `  ${f.label}: ${f.value}`),
+            ...d.decision.verdicts.map((v: any) => `  ${v.step}: ${v.verdict} — ${v.summary}`),
+            ...d.decision.sections.flatMap((s: any) => [`  ${s.heading}:`, ...String(s.body).split("\n").map((l: string) => "    " + l)]),
+            ...(d.decision.findings.length ? ["  findings:", ...d.decision.findings.map((l: string) => `    ${l}`)] : []),
+            ...d.decision.commands.map((c: string) => `  run: ${c}`),
+          ].filter((l: string) => l !== "") : []),
           "", "brief:", t.brief.split("\n").map((l: string) => "  " + l).join("\n"), "",
           "steps:",
           ...d.steps.map((s: any) => {

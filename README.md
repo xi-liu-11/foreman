@@ -131,6 +131,12 @@ Run artifacts live under `~/.foreman/runs/<task>/<step>-<attempt>/`:
 `system.md`, `prompt.md`, `agents.json`, `command.txt`, `transcript.jsonl`,
 `stderr.log`, `report.json`.
 
+### Dashboard
+
+`foreman dashboard` opens a read-only web view. Cards start collapsed to one line: id, title, status, project · kind · cost · age, the current step or device lease, and a lead for gates, questions and failures. Click a row to expand it; open state is kept per browser (localStorage) across refreshes, and each section has Expand all / Collapse all.
+An expanded card shows a Decision block, separate from the Activity block (step strip, notes). Merge gate: handoff.md Summary/Risk/Follow-ups, last review/test verdicts, QA rounds, cost. Plan gate: plan summary and plan-QA verdict, plus the remaining findings from qa/plan-review.md when plan QA still fails after max revisions. Question: full text and the `task answer` command. Failed: error, step/attempt and `task retry`.
+The text is built by taskd and served as `decision` on `GET /tasks/:id` (`task show` prints it too). The dashboard never acts; `task approve/reject/answer/retry` do.
+
 ## Task kinds
 
 | kind | pipeline | worktree |

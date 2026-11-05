@@ -1,0 +1,6 @@
+== light, 2 needs-you
+(geometry as above)
+fit: {"innerH":900,"inbox":2,"active":10,"open":0,"activeBottom":844,"recentTop":856}
+== dark, 2 needs-you
+(geometry as above)
+fit: {"innerH":900,"inbox":2,"active":10,"open":0,"activeBottom":844,"recentTop":856}

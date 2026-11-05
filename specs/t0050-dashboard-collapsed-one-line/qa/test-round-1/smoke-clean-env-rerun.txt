@@ -1,0 +1,53 @@
+device lane
+  task leases shows the lane
+happy path
+  T0001 -> done
+block/answer/resume
+  T0002 -> blocked
+  T0002 -> done
+crash/retry
+  T0003 -> done
+cancel
+  T0004 -> cancelled
+taskd outage longer than the lease mid-step
+  T0005 -> done
+  single attempt survived the outage
+  done task has decision: null
+  /dashboard serves the collapsible page
+implement (lite): plan, gate, implement, qa fails once, implement, qa passes, pr, open_pr, gate, merge
+  T0006 -> gate
+  T0006 -> gate
+  T0006 -> done
+  one QA cycle
+  branch fm/t0006-add-widget
+  pr url recorded
+  worktree removed after merge
+  merged work reached origin/main
+  step budgets recorded (implement 7, plan 90)
+implement (speckit): numbered branch and feature dir from template
+  branch 001-add-gadget
+  spec.md seeded from template
+  T0007 -> gate
+  T0007 -> gate
+  T0007 -> done
+implement (direct merge) from a Linear ticket: title/brief from ticket, worker ticket commands, squash onto main and push, ticket transitions
+  title taken from ticket
+  brief taken from ticket
+  worker created a child ticket
+  ticket moved to In Progress on start
+  T0008 -> gate
+  T0008 -> done
+  squashed work reached origin/main
+  exactly one squash commit on main
+  commit message cites task and ticket
+  main checkout fast-forwarded
+  worktree removed
+  feature branch deleted
+  linear log: start, comment, create, handoff review, done
+implement (direct, gated, no-ff): handoff, merge gate, merge --no-ff
+  T0009 -> gate
+  T0009 expected gate, got failed
+test/smoke.sh: line 61: 90325 Terminated: 15          FAKE_LINEAR_PORT=7779 FAKE_LINEAR_LOG="$T/linear.log" bun "$ROOT/test/fake-linear.ts" >> "$T/linear-server.log" 2>&1
+test/smoke.sh: line 61: 96181 Terminated: 15          FOREMAN_HOME="$T" FOREMAN_CLAUDE_BIN="$ROOT/test/fake-claude.sh" FOREMAN_GH_BIN="$ROOT/test/fake-gh.sh" FOREMAN_LINEAR_URL=http://127.0.0.1:7779 "$ROOT/bin/foreman" taskd >> "$T/taskd.log" 2>&1
+logs: /var/folders/7w/1mrvd9812138hkj9ndncqcvh0000gn/T//foreman-smoke-90251
+exit=1

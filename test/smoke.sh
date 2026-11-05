@@ -78,6 +78,8 @@ echo "taskd outage longer than the lease mid-step"; echo slow > "$T/mode"; "$ROO
 kill $PID; wait $PID 2>/dev/null || true; sleep 8; start_taskd; sleep 1.5; wait_for T0005 done
 attempts=$("$ROOT/bin/task" show T0005 --json | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["steps"]))')
 [ "$attempts" = "1" ] && echo "  single attempt survived the outage" || { echo "  expected 1 attempt, got $attempts"; exit 1; }
+"$ROOT/bin/task" show T0005 --json | python3 -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if "decision" in d and d["decision"] is None else 1)' && echo "  done task has decision: null" || { echo "  decision not null"; exit 1; }
+curl -s -H 'authorization: Bearer testtoken' http://127.0.0.1:7778/dashboard | grep -q data-expand && echo "  /dashboard serves the collapsible page" || { echo "  /dashboard missing data-expand"; exit 1; }
 field() { "$ROOT/bin/task" show "$1" --json | python3 -c "import json,sys; t=json.load(sys.stdin)['task']; print(t['$2'])"; }
 echo "implement (lite): plan, gate, implement, qa fails once, implement, qa passes, pr, open_pr, gate, merge"; echo done > "$T/mode"
 "$ROOT/bin/task" create --project lite --kind implement --title "Add the widget" --brief x >/dev/null

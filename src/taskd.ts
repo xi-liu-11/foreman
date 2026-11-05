@@ -20,6 +20,7 @@ import { loadConfig, denyListFor, stepTimeoutMin, deviceResources, REPO_ROOT, RU
 import { requestLease, releaseLease, releaseStepLeases, reconcileLeases, leaseView, devicePrompt, dispatchView, laneViews, laneStatusForTask, type GroupsOf } from "./leases";
 import { dispatchVerdict } from "./lane";
 import { pipelineFor, PIPELINES, type PipelineStep } from "./pipelines";
+import { buildDecision, failingReview } from "./decision";
 import * as herdr from "./herdr";
 import * as git from "./git";
 import { providerFor, ticketContext, type Ticket } from "./tickets";
@@ -334,16 +335,8 @@ function gateLabel(task: TaskRow, gate?: PipelineStep): string {
   const steps = pipelineSteps(task);
   const ps = gate ?? steps.find(s => s.name === task.current_step);
   if (!ps || ps.type !== "gate") return "";
-  for (let i = steps.findIndex(s => s.name === ps.name) - 1; i >= 0; i--) {
-    const s = steps[i];
-    if (s.type === "gate") break;
-    if (s.type !== "agent" || !s.on_fail) continue;
-    const rows = store.stepsForTask(task.id).filter(x => x.name === s.name && x.result);
-    const last = rows[rows.length - 1];
-    if (!last || JSON.parse(last.result!).verdict !== "fail") break;
-    return `${ps.label} — plan QA still fails after ${rows.length} review(s); see ${task.feature_dir ?? "specs/<feature>"}/qa/plan-review.md`;
-  }
-  return ps.label;
+  const fr = failingReview(steps, ps.name, store.stepsForTask(task.id));
+  return fr ? `${ps.label} — plan QA still fails after ${fr.reviews} review(s); see ${task.feature_dir ?? "specs/<feature>"}/qa/plan-review.md` : ps.label;
 }
 
 // The step a reject at the gate at gateIdx sends work back to: the on_fail target
@@ -850,7 +843,12 @@ export async function route(req: Request): Promise<Response> {
   }
   if ((mm = m(/^\/tasks\/([^/]+)$/)) && req.method === "GET") {
     const task = store.getTask(mm[1]); if (!task) return bad("no such task", 404);
-    return json({ task: { ...task, gate_label: task.status === "gate" ? gateLabel(task) : null }, steps: store.stepsForTask(task.id), blocks: store.openBlocks(task.id), artifacts: store.artifactsForTask(task.id), leases: store.leasesForTask(task.id).map(r => leaseView(store, r, groupsOf, leaseMaxMin(r.project))), events: store.eventsForTask(task.id, 50).reverse() });
+    const steps = store.stepsForTask(task.id), blocks = store.openBlocks(task.id), artifacts = store.artifactsForTask(task.id);
+    const gate_label = task.status === "gate" ? gateLabel(task) : null;
+    let decision = null;
+    try { decision = buildDecision({ task, steps, blocks, artifacts, pipeline: pipelineSteps(task), gateLabel: gate_label ?? "", maxPlanCycles: cfg.defaults.max_plan_cycles }); }
+    catch (e: any) { log(`decision ${task.id} failed:`, e.message); }
+    return json({ task: { ...task, gate_label }, decision, steps, blocks, artifacts, leases: store.leasesForTask(task.id).map(r => leaseView(store, r, groupsOf, leaseMaxMin(r.project))), events: store.eventsForTask(task.id, 50).reverse() });
   }
   if ((mm = m(/^\/tasks\/([^/]+)\/(cancel|close|approve|reject|retry|note|artifacts|blocks)$/)) && req.method === "POST") {
     const task = store.getTask(mm[1]); if (!task) return bad("no such task", 404);

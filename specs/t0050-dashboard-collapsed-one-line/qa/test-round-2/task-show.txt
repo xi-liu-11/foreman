@@ -1,0 +1,32 @@
+===== task show T0001
+decision: Merge: Cards collapse to one line and gates show a Decision block.
+  QA rounds: 3
+  Cost: $3.20
+  review: pass — No blocking findings.
+  test: pass — 161 tests pass.
+  Summary:
+    Cards collapse to one line and gates show a Decision block. Activity stays separate & readable.
+    
+    - **Collapsed** rows with `localStorage` state
+    - Decision built by `src/decision.ts`
+  Risk:
+    Low. A "quoted" <script>alert('xss')</script> & ampersand should show literally.
+  Follow-ups:
+    - Strip table pipes in findings
+    - Restart taskd
+  run: task approve T0001
+  run: task reject T0001 "<feedback>"
+brief:
+===== task show T0002
+decision: Merge: Fallback summary from the handoff step.
+  QA rounds: 2
+  Cost: $3.20
+  review: pass — review ok
+  test: pass — test ok
+  Handoff summary:
+    Fallback summary from the handoff step. Second sentence.
+  run: task approve T0002
+  run: task reject T0002 "<feedback>"
+brief:
+===== task show T0003
+===== task show T0007

@@ -1,0 +1,12 @@
+[server]
+port = 7791
+bind = "127.0.0.1"
+token = "qatoken"
+[defaults]
+worktrees = "/tmp/fm-t0050-qa/home/worktrees"
+[projects.demo]
+path = "/Users/xi/git/.worktrees/foreman/fm-t0050-dashboard-collapsed-one-line"
+verify = "inspect"
+concurrency = 0
+resources = ["sim-a", "sim-b", "phone-a", "phone-b"]
+resource_groups = { sims = { members = ["sim-a", "sim-b"], capacity = 1 }, phones = { members = ["phone-a", "phone-b"], capacity = 1 } }
