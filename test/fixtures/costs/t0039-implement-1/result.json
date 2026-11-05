@@ -1,0 +1,40 @@
+{
+  "total_cost_usd": 11.364889799999998,
+  "num_turns": 168,
+  "modelUsage": {
+    "claude-opus-5-5": {
+      "inputTokens": 300,
+      "outputTokens": 102298,
+      "cacheReadInputTokens": 30182703,
+      "cacheCreationInputTokens": 289646,
+      "webSearchRequests": 0,
+      "costUSD": 10.400868600000004,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 19235,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 289646,
+      "canonicalModel": "claude-opus-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    },
+    "claude-sonnet-5-5": {
+      "inputTokens": 52,
+      "outputTokens": 28248,
+      "cacheReadInputTokens": 908597,
+      "cacheCreationInputTokens": 236231,
+      "webSearchRequests": 0,
+      "costUSD": 0.9640211999999999,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 9715,
+      "cacheCreationEphemeral5mInputTokens": 236231,
+      "cacheCreationEphemeral1hInputTokens": 0,
+      "canonicalModel": "claude-sonnet-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "started_at": "2026-11-04T14:12:41.208Z",
+  "finished_at": "2026-11-04T16:10:12.078Z"
+}

@@ -1,0 +1,131 @@
+POST step 1 (QA1 #1) -> 200 {"step_status":"failed","task_status":"running"}
+POST step 2 (QA1 #2) -> 200 {"step_status":"failed","task_status":"running"}
+POST step 3 (QA1 #3) -> 200 {"step_status":"failed","task_status":"running"}
+299 |   }
+300 |   latestStep(task_id: string, name: string): StepRow | null {
+301 |     return this.db.query("SELECT * FROM steps WHERE task_id = ? AND name = ? ORDER BY id DESC LIMIT 1").get(task_id, name) as StepRow | null;
+302 |   }
+303 |   insertStep(s: { task_id: string; name: string; role: string; status: StepStatus; attempt: number; session_id?: string | null; resume_prompt?: string | null; machine?: string | null }): StepRow {
+304 |     const r = this.db.run(`INSERT INTO steps (task_id, name, role, status, attempt, session_id, resume_prompt, machine, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                            ^
+SQLiteError: database is locked
+      errno: 5,
+ byteOffset: -1,
+       code: "SQLITE_BUSY"
+
+      at run (bun:sqlite:318:19)
+      at insertStep (/Users/xi/git/.worktrees/foreman/fm-t0057-cost-accounting-top-dashboard/src/db.ts:304:23)
+      at step (/Users/xi/git/.worktrees/foreman/fm-t0057-cost-accounting-top-dashboard/[eval]:15:16)
+      at /Users/xi/git/.worktrees/foreman/fm-t0057-cost-accounting-top-dashboard/[eval]:23:7
+
+Bun v1.4.4 (macOS arm64)
+### steps table (sqlite)
+id  task_id  attempt  session_id  cost_usd  session_cost_usd  turns  est  unk  day       
+--  -------  -------  ----------  --------  ----------------  -----  ---  ---  ----------
+1   QA1      1        S1          7.84      7.84              5      0    0    2026-11-05
+2   QA1      2        S1          11.32     19.16             10     0    0    2026-11-05
+3   QA1      3        S2          6.77      6.77              146    0    0    2026-11-05
+
+### GET /costs/today
+{"day":"2026-11-05","total":{"usd":25.93,"estimated":0,"unknown":0,"steps":3},"projects":{"qa-alpha":{"usd":25.93,"estimated":0,"unknown":0,"steps":3}}}
+
+### GET /tasks?all=1 (cost fields)
+QA1 qa-alpha failed 25.93 0 0
+QA2 qa-alpha running 0 0 0
+QA3 qa-beta failed 0 0 0
+
+### task ls --all
+ID     STATUS    PROJECT        KIND           STEP           AGE   COST     Q  TITLE
+QA1    failed    qa-alpha       implement      implement      2s    $25.93      qa QA1
+QA2    running   qa-alpha       implement      implement      2s    $0.00       qa QA2
+QA3    failed    qa-beta        implement      implement      2s    $0.00       qa QA3
+
+today: $25.93 · qa-alpha $25.93
+exit 0
+
+### task ls --all --project qa-beta
+ID     STATUS    PROJECT        KIND           STEP           AGE   COST     Q  TITLE
+QA3    failed    qa-beta        implement      implement      3s    $0.00       qa QA3
+
+today: $0.00
+exit 0
+
+### task ls --all --json | head
+[
+  {
+    "id": "QA1",
+    "project": "qa-alpha",
+    "kind": "implement",
+    "title": "qa QA1",
+    "brief": "b",
+    "status": "failed",
+    "pipeline": "[{\"type\":\"agent\",\"name\":\"plan\",\"role\":\"architect\",\"prompt\":\"plan_lite\"},{\"type\":\"gate\",\"name\":\"plan_approved\",\"label\"
+exit 0
+
+### task show QA1
+QA1 [implement] qa QA1
+status: failed   project: qa-alpha   step: implement   qa cycles: 0   plan cycles: 0
+worktree: /fake/wt/QA1 (null)
+decision: Failed: step 'implement' failed 3 times: x
+  Step: implement
+  Attempt: #3
+  Cost: $25.93
+  Error:
+    step 'implement' failed 3 times: x
+  run: task retry QA1
+  run: task retry QA1 --fresh
+brief:
+  b
+steps:
+  implement      #1 failed   developer     10m   $7.84 5t error: x
+      x
+  implement      #2 failed   developer     10m   $11.32 10t error: x
+      x
+  implement      #3 failed   developer     10m   $6.77 146t error: x
+      x
+
+result: step 'implement' failed 3 times: x
+recent events:
+  02:50:43 step.failed          {"step":"implement","attempt":1,"cost_usd":7.84,"session_cost_usd":7.84,"estimated":false,"unknown":false,"tur
+  02:50:43 step.failed          {"step":"implement","attempt":2,"cost_usd":11.32,"session_cost_usd":19.16,"estimated":false,"unknown":false,"t
+
+### task show QA2
+QA2 [implement] qa QA2
+status: running   project: qa-alpha   step: implement   qa cycles: 0   plan cycles: 0
+worktree: /fake/wt/QA2 (null)
+brief:
+  b
+steps:
+recent events:
+  02:50:44 scheduler.error      {"error":"project 'qa-alpha' is no longer in config.toml"}
+  02:50:46 scheduler.error      {"error":"project 'qa-alpha' is no longer in config.toml"}
+
+### task show QA3
+QA3 [implement] qa QA3
+status: failed   project: qa-beta   step: implement   qa cycles: 0   plan cycles: 0
+worktree: /fake/wt/QA3 (null)
+decision: Failed: unknown error
+  Step: implement
+  Cost: $0.00
+  Error:
+    unknown error
+  run: task retry QA3
+  run: task retry QA3 --fresh
+brief:
+  b
+steps:
+recent events:
+
+### dashboard header (#status) from the served /dashboard page and live /costs/today
+today ${money(today.total.usd, today.total.estimated, today.total.unknown)}${today.total.estimated > 0 ? 
+#status = 0 running · 0 need you · 3 failed · 0 superseded · refreshed 12:50:48 PM · today $25.93
+
+### taskd log
+02:50:42 taskd listening on http://127.0.0.1:17955 (herdr: no, workers run as background processes)
+02:50:42 projects: (none configured)
+02:50:43 result QA1/implement#1: failed (x)
+02:50:43 result QA1/implement#2: failed (x)
+02:50:43 result QA1/implement#3: failed (x)
+02:50:43 failed QA1: step 'implement' failed 3 times: x
+02:50:44 advance QA2 failed: project 'qa-alpha' is no longer in config.toml
+02:50:46 advance QA2 failed: project 'qa-alpha' is no longer in config.toml

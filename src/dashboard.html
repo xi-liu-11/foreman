@@ -100,7 +100,7 @@ document.addEventListener("click", e => {
 const ago = iso => { if (!iso) return ""; const s = Math.max(0, (Date.now() - Date.parse(iso)) / 1000); return s < 60 ? Math.round(s) + "s" : s < 3600 ? Math.round(s / 60) + "m" : s < 86400 ? Math.round(s / 3600) + "h" : Math.round(s / 86400) + "d"; };
 const dur = (a, b) => { if (!a) return ""; const s = ((b ? Date.parse(b) : Date.now()) - Date.parse(a)) / 1000; return s < 60 ? Math.round(s) + "s" : Math.round(s / 60) + "m"; };
 const secs = n => { const s = Math.max(0, Number(n) || 0); return s < 60 ? Math.round(s) + "s" : s < 3600 ? Math.round(s / 60) + "m" : Math.round(s / 3600) + "h"; };
-const money = n => "$" + Number(n || 0).toFixed(2);
+const money = (n, est, unk) => { n = Number(n || 0); est = est || 0; unk = unk || 0; return n === 0 && unk > 0 ? "$?" : (est > 0 || unk > 0) && n > 0 ? "~$" + n.toFixed(2) : "$" + n.toFixed(2); };
 
 function pipelineSteps(t, steps) {
   const names = JSON.parse(t.pipeline).map(s => s.type === "parallel" ? s.children.map(c => c.name) : [s.name]).flat();
@@ -176,7 +176,7 @@ function card(t, d) {
   const lead = d?.decision?.lead || (t.status === "gate" ? t.gate_label || "" : "");
   return `<div class="card${open.has(t.id) ? " open" : ""}" data-id="${esc(t.id)}">
     <div class="head"><span class="id">${t.id}</span><span class="title" title="${esc(t.title)}">${esc(t.title)}</span><span class="badge ${revising ? "blocked" : t.status}">${revising ? "rejected, revising" : t.status}</span>
-      <span class="meta">${esc(t.project)} · ${t.kind} · ${money(t.cost_usd)} · ${ago(t.created_at)}</span>${cur ? `<span class="meta cur">${cur}</span>` : ""}${lead ? `<span class="lead" title="${esc(lead)}">${esc(lead)}</span>` : ""}</div>
+      <span class="meta">${esc(t.project)} · ${t.kind} · ${money(t.cost_usd, t.cost_estimated, t.cost_unknown)} · ${ago(t.created_at)}</span>${cur ? `<span class="meta cur">${cur}</span>` : ""}${lead ? `<span class="lead" title="${esc(lead)}">${esc(lead)}</span>` : ""}</div>
     <div class="body">${d?.decision ? decisionHtml(d.decision) : ""}${activityHtml(t, d)}</div>
   </div>`;
 }
@@ -184,7 +184,7 @@ function card(t, d) {
 async function refresh() {
   try {
     const all = await api("/tasks?all=1");
-    const [leases, projects, lanes] = await Promise.all([api("/leases"), api("/projects"), api("/lanes")]);
+    const [leases, projects, lanes, today] = await Promise.all([api("/leases"), api("/projects"), api("/lanes"), api("/costs/today").catch(() => null)]);
     const dev = devices(projects, leases, lanes);
     document.getElementById("devices").innerHTML = dev;
     document.getElementById("devices-sec").hidden = dev.startsWith("<span");
@@ -200,11 +200,11 @@ async function refresh() {
     for (const id of [...open]) if (!ids.has(id)) { open.delete(id); pruned = true; }
     if (pruned) save();
     const recent = all.filter(t => !active.includes(t) && !needs.includes(t)).slice(0, 15);
-    document.getElementById("recent").innerHTML = recent.length ? `<table><tr><th>id</th><th>status</th><th>project</th><th>kind</th><th>age</th><th>cost</th><th>title</th></tr>${recent.map(t => `<tr><td class="id">${t.id}</td><td><span class="badge ${t.status}">${t.superseded_by ? "superseded→" + t.superseded_by : t.status}</span></td><td>${esc(t.project)}</td><td>${t.kind}</td><td>${ago(t.created_at)}</td><td>${money(t.cost_usd)}</td><td>${esc(t.title)}</td></tr>`).join("")}</table>` : `<span class="empty">none</span>`;
+    document.getElementById("recent").innerHTML = recent.length ? `<table><tr><th>id</th><th>status</th><th>project</th><th>kind</th><th>age</th><th>cost</th><th>title</th></tr>${recent.map(t => `<tr><td class="id">${t.id}</td><td><span class="badge ${t.status}">${t.superseded_by ? "superseded→" + t.superseded_by : t.status}</span></td><td>${esc(t.project)}</td><td>${t.kind}</td><td>${ago(t.created_at)}</td><td>${money(t.cost_usd, t.cost_estimated, t.cost_unknown)}</td><td>${esc(t.title)}</td></tr>`).join("")}</table>` : `<span class="empty">none</span>`;
     const running = all.filter(t => t.status === "running").length;
     const failed = all.filter(t => t.status === "failed").length;
     const superseded = all.filter(t => t.status === "superseded").length;
-    document.getElementById("status").textContent = `${running} running · ${needs.length} need you · ${failed} failed · ${superseded} superseded · refreshed ${new Date().toLocaleTimeString()}`;
+    document.getElementById("status").textContent = `${running} running · ${needs.length} need you · ${failed} failed · ${superseded} superseded · refreshed ${new Date().toLocaleTimeString()}${today?.total ? ` · today ${money(today.total.usd, today.total.estimated, today.total.unknown)}${today.total.estimated > 0 ? ` (${today.total.estimated} est.)` : ""}` : ""}`;
   } catch (e) {
     document.getElementById("status").innerHTML = `<span class="err">${esc(e.message)}${!token ? " — open this page via `foreman dashboard` so it gets the token" : ""}</span>`;
   }

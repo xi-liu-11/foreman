@@ -103,8 +103,11 @@ CREATE TABLE steps (
   const store = new Store(path);
   const after = store.getStep(before.id)!;
   // T0054 adds launch_started_at, launched_at and runner_seen_at the same way.
+  // T0055 cost columns are added too; the migration copies cost_usd into session_cost_usd.
+  const { session_cost_usd, cost_estimated, cost_unknown, ...rest } = after;
   const added = { timeout_min: undefined, launch_started_at: undefined, launched_at: undefined, runner_seen_at: undefined };
-  expect({ ...after, ...added }).toEqual({ ...before, ...added });
+  expect({ ...rest, ...added }).toEqual({ ...before, ...added });
+  expect([session_cost_usd, cost_estimated, cost_unknown]).toEqual([4.5, 0, 0]);
   expect(after.timeout_min).toBeNull();
   expect([after.launch_started_at, after.launched_at, after.runner_seen_at]).toEqual([null, null, null]);
   expect(store.getTask("OLD1")!.title).toBe("t");
@@ -166,8 +169,10 @@ test("runner kills at step.timeout_min, or the global when null", async () => {
   const server = Bun.serve({ port: 0, fetch: req => route(req) });
   const run = async (id: string, timeout_min: number | null) => {
     store.insertTask({
+      // The pipeline must hold the step: a tick fails a task whose current step is missing, and the
+      // runner's check-in (T0054) then tells it to stop before it writes report.json.
       id, project: P, kind: "research", title: "runner budget", brief: "b", status: "running",
-      pipeline: "[]", current_step: "research", priority: 0, branch: null, worktree: null,
+      pipeline: JSON.stringify([{ type: "agent", name: "research", role: "researcher", prompt: "" }]), current_step: "research", priority: 0, branch: null, worktree: null,
       feature_dir: null, ticket: null, pr_url: null, qa_cycles: 0, result: null,
     });
     const s = store.insertStep({ task_id: id, name: "research", role: "researcher", status: "running", attempt: 1 });

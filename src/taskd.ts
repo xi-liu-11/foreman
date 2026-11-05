@@ -24,6 +24,7 @@ import { buildDecision, failingReview } from "./decision";
 import * as herdr from "./herdr";
 import * as git from "./git";
 import { providerFor, ticketContext, type Ticket } from "./tickets";
+import { deltaCost, priceUsage, sessionLogPath, sessionUsage, type Usage } from "./costs";
 
 export const cfg: ForemanConfig = loadConfig();
 const store = new Store();
@@ -176,9 +177,11 @@ async function expireLeases(): Promise<void> {
         : `${NEVER_STARTED}: launch timed out after ${secsSince(s.launch_started_at)}s`;
     }
     const never = error.startsWith(NEVER_STARTED);
+    // A never-started attempt ran nothing, so its cost is a known zero (no estimate, no session total).
+    const cost: StepCost = never ? { cost_usd: 0, turns: 0, session_cost_usd: null, cost_estimated: 0, cost_unknown: 0 } : stepCost(s, {});
     log(`lease expired for ${s.task_id}/${s.name}#${s.attempt}: ${error}`);
     tx(() => {
-      store.updateStep(s.id, { status: "failed", finished_at: now(), error });
+      store.updateStep(s.id, { status: "failed", finished_at: now(), error, ...cost });
       store.event(never ? "step.never_started" : "step.lease_expired", { step: s.name, attempt: s.attempt, ...(never ? { error } : {}) }, s.task_id, s.id);
       releaseStepLeases(store, s.id, "heartbeat lease expired", groupsOf);
     });
@@ -607,6 +610,51 @@ export function endedEarly(summary: unknown): boolean {
   return typeof summary === "string" && EARLY_END.test(summary);
 }
 
+type StepCost = Pick<StepRow, "cost_usd" | "turns" | "session_cost_usd" | "cost_estimated" | "cost_unknown">;
+
+// The session id an attempt ran under: reported, recorded at launch, or the
+// init event of its stream transcript.
+function attemptSessionId(task: TaskRow, step: StepRow, body: any): string | null {
+  if (body.session_id) return String(body.session_id);
+  if (step.session_id) return step.session_id;
+  try {
+    for (const line of readFileSync(join(runDirFor(task, step), "transcript.jsonl"), "utf8").split("\n")) {
+      if (!line.trim()) continue;
+      const ev = JSON.parse(line);
+      if (ev.type === "system" && ev.subtype === "init" && ev.session_id) return String(ev.session_id);
+    }
+  } catch {}
+  return null;
+}
+
+// What an attempt cost (T0055). Claude's total_cost_usd is cumulative over a
+// session, so a result records the delta over earlier attempts of the session.
+// Without a result the cost is estimated from the session log (the runner's
+// usage, or taskd reads the log itself for a local step), else marked unknown.
+function stepCost(step: StepRow, body: any): StepCost {
+  const task = store.getTask(step.task_id)!;
+  const r = body.result ?? {};
+  const sid = attemptSessionId(task, step, body);
+  const prev = sid ? store.prevSessionCost(sid, step.id) : 0;
+  if (typeof r.total_cost_usd === "number") {
+    const raw = r.total_cost_usd;
+    return { cost_usd: deltaCost(raw, prev), session_cost_usd: raw, turns: Number(r.num_turns ?? 0), cost_estimated: 0, cost_unknown: 0 };
+  }
+  const unknown: StepCost = { cost_usd: 0, turns: 0, session_cost_usd: sid ? prev : null, cost_estimated: 0, cost_unknown: 1 };
+  let usage: Usage | null = body.usage?.models ? body.usage : null;
+  if (!usage && !step.machine && sid) {
+    try {
+      const proj = cfg.projects[task.project];
+      const path = sessionLogPath(task.worktree ?? proj?.path ?? "", sid);
+      if (path) usage = sessionUsage(path, { from: step.started_at ?? step.created_at, to: now() });
+    } catch (e: any) { log(`cost estimate failed for ${task.id}/${step.name}#${step.attempt}: ${e.message}`); }
+  }
+  if (!usage) return unknown;
+  const priced = priceUsage(usage, cfg.pricing);
+  if (!("usd" in priced)) { log(`cost unknown for ${task.id}/${step.name}#${step.attempt}: no price for ${priced.unpriced.join(", ")}`); return unknown; }
+  return { cost_usd: priced.usd, turns: usage.api_calls, session_cost_usd: sid ? prev + priced.usd : null, cost_estimated: 1, cost_unknown: 0 };
+}
+
 async function handleResult(step: StepRow, body: any): Promise<{ step_status: string; task_status: string }> {
   const task = store.getTask(step.task_id)!;
   const r = body.result ?? {};
@@ -626,15 +674,16 @@ async function handleResult(step: StepRow, body: any): Promise<{ step_status: st
   else { status = "failed"; error = "worker ended without structured output"; }
   if (isStopped(task)) { status = "failed"; error = error ?? task.status; }
 
+  const cost = stepCost(step, body);
   tx(() => {
     store.updateStep(step.id, {
       status, finished_at: now(), error,
       session_id: body.session_id ?? step.session_id,
       result: so ? JSON.stringify(so) : null,
-      cost_usd: Number(r.total_cost_usd ?? 0), turns: Number(r.num_turns ?? 0),
+      ...cost,
       lease_until: null,
     });
-    store.event(`step.${status}`, { step: step.name, attempt: step.attempt, cost_usd: r.total_cost_usd ?? 0, turns: r.num_turns ?? 0, error, summary: so?.summary ?? null, verdict: so?.verdict ?? null }, task.id, step.id);
+    store.event(`step.${status}`, { step: step.name, attempt: step.attempt, cost_usd: cost.cost_usd, session_cost_usd: cost.session_cost_usd, estimated: Boolean(cost.cost_estimated), unknown: Boolean(cost.cost_unknown), turns: cost.turns, error, summary: so?.summary ?? null, verdict: so?.verdict ?? null }, task.id, step.id);
     const known = new Set(store.artifactsForTask(task.id).map(a => a.path));
     for (const a of so?.artifacts ?? []) if (a?.path && !known.has(a.path)) { store.insertArtifact(task.id, step.id, a.path, a.kind ?? "file", null); known.add(a.path); }
     if (status === "blocked") {
@@ -747,7 +796,24 @@ export async function route(req: Request): Promise<Response> {
   if (p === "/tasks" && req.method === "GET") {
     const status = url.searchParams.get("status")?.split(",").filter(Boolean);
     const tasks = store.listTasks({ status, project: url.searchParams.get("project") ?? undefined, all: url.searchParams.get("all") === "1" });
-    return json(tasks.map(t => ({ ...t, gate_label: t.status === "gate" ? gateLabel(t) : null, open_blocks: store.openBlocks(t.id).length, cost_usd: store.stepsForTask(t.id).reduce((a, s) => a + s.cost_usd, 0), lane: laneOf(t) })));
+    return json(tasks.map(t => {
+      let cost_usd = 0, cost_estimated = 0, cost_unknown = 0;
+      for (const s of store.stepsForTask(t.id)) { cost_usd += s.cost_usd; cost_estimated += s.cost_estimated; cost_unknown += s.cost_unknown; }
+      return { ...t, gate_label: t.status === "gate" ? gateLabel(t) : null, open_blocks: store.openBlocks(t.id).length, cost_usd, cost_estimated, cost_unknown, lane: laneOf(t) };
+    }));
+  }
+  // Step costs finished on taskd's local calendar day, overall and per project.
+  if (p === "/costs/today" && req.method === "GET") {
+    const d = new Date();
+    const from = new Date(d.getFullYear(), d.getMonth(), d.getDate()), to = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1);
+    const day = `${from.getFullYear()}-${String(from.getMonth() + 1).padStart(2, "0")}-${String(from.getDate()).padStart(2, "0")}`;
+    const total = { usd: 0, estimated: 0, unknown: 0, steps: 0 };
+    const projects: Record<string, typeof total> = {};
+    for (const { project: name, ...c } of store.costsBetween(from.toISOString(), to.toISOString())) {
+      projects[name] = c;
+      total.usd += c.usd; total.estimated += c.estimated; total.unknown += c.unknown; total.steps += c.steps;
+    }
+    return json({ day, total, projects });
   }
   if (p === "/tasks" && req.method === "POST") {
     const { project: projName, kind, priority, ticket, branch: existingBranch, start_at, continues } = body;

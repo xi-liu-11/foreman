@@ -1,0 +1,7 @@
+claude-opus-5-5 {"input":300,"output":102298,"cache_read":30182703,"cache_write_5m":0,"cache_write_1h":289646}
+  result.modelUsage: 300 102298 30182703 0 289646
+  estimate $10.400869 vs costUSD $10.400868600000004 (-0.0000 %)
+claude-sonnet-5-5 {"input":52,"output":28248,"cache_read":908597,"cache_write_5m":236231,"cache_write_1h":0}
+  result.modelUsage: 52 28248 908597 236231 0
+  estimate $0.964021 vs costUSD $0.9640211999999999 (0.0000 %)
+total estimate $11.364890 vs total_cost_usd $11.364889799999998 (0.0000 %); api_calls 145

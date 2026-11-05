@@ -1,0 +1,17 @@
+# copy: sqlite3 -readonly ~/.foreman/foreman.db .backup -> /var/folders/7w/1mrvd9812138hkj9ndncqcvh0000gn/T/tmp.iAFRKRWJdk/foreman.db (Thu  5 Nov 2026 12:35:08 AEST)
+## before
+cols|launch_started_at,launched_at,runner_seen_at
+meta|0
+steps|814.047983|484
+## after run 1
+cols|launch_started_at,launched_at,runner_seen_at,session_cost_usd,cost_estimated,cost_unknown
+meta|2026-11-05T02:35:08.646Z
+events|1
+steps|662.544984|484|814.047983
+## after run 2
+cols|launch_started_at,launched_at,runner_seen_at,session_cost_usd,cost_estimated,cost_unknown
+meta|2026-11-05T02:35:08.646Z
+events|1
+steps|662.544984|484|814.047983
+## diff run1 vs run2 step dump
+identical (484 rows)

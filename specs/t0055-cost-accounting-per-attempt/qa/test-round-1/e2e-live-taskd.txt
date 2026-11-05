@@ -1,0 +1,120 @@
+POST step 1 (QA1 #1) -> 200 {"step_status":"failed","task_status":"running"}
+POST step 2 (QA1 #2) -> 200 {"step_status":"failed","task_status":"running"}
+POST step 3 (QA1 #3) -> 200 {"step_status":"failed","task_status":"running"}
+POST step 4 (QA2 #1) -> 200 {"step_status":"failed","task_status":"running"}
+POST step 5 (QA2 #2) -> 200 {"step_status":"failed","task_status":"running"}
+POST step 6 (QA2 #3) -> 200 {"step_status":"failed","task_status":"running"}
+POST step 7 (QA3 #1) -> 200 {"step_status":"failed","task_status":"running"}
+### steps table (sqlite)
+id  task_id  attempt  session_id  cost_usd  session_cost_usd  turns  est  unk  day       
+--  -------  -------  ----------  --------  ----------------  -----  ---  ---  ----------
+1   QA1      1        S1          7.84      7.84              5      0    0    2026-11-05
+2   QA1      2        S1          11.32     19.16             10     0    0    2026-11-05
+3   QA1      3        S2          6.77      6.77              146    0    0    2026-11-05
+4   QA2      1        S4          2.0       2.0               3      0    0    2026-11-05
+5   QA2      2        S4          0.054     2.054             2      1    0    2026-11-05
+6   QA2      3        S4          0.946     3.0               4      0    0    2026-11-05
+7   QA3      1                    0.0                         0      0    1    2026-11-05
+
+### GET /costs/today
+{"day":"2026-11-05","total":{"usd":28.93,"estimated":1,"unknown":1,"steps":7},"projects":{"qa-alpha":{"usd":28.93,"estimated":1,"unknown":0,"steps":6},"qa-beta":{"usd":0,"estimated":0,"unknown":1,"steps":1}}}
+
+### GET /tasks?all=1 (cost fields)
+QA1 qa-alpha failed 25.93 0 0
+QA2 qa-alpha failed 3 1 0
+QA3 qa-beta running 0 0 1
+
+### task ls --all
+ID     STATUS    PROJECT        KIND           STEP           AGE   COST     Q  TITLE
+QA1    failed    qa-alpha       implement      implement      0s    $25.93      qa QA1
+QA2    failed    qa-alpha       implement      implement      0s    ~$3.00      qa QA2
+QA3    running   qa-beta        implement      implement      0s    $?          qa QA3
+
+today: ~$28.93 (1 estimated, 1 unknown) · qa-alpha ~$28.93 (1 estimated) · qa-beta $? (1 unknown)
+exit 0
+
+### task ls --all --project qa-beta
+ID     STATUS    PROJECT        KIND           STEP           AGE   COST     Q  TITLE
+QA3    running   qa-beta        implement      implement      0s    $?          qa QA3
+
+today: $? (1 unknown)
+exit 0
+
+### task ls --all --json | head
+[
+  {
+    "id": "QA1",
+    "project": "qa-alpha",
+    "kind": "implement",
+    "title": "qa QA1",
+    "brief": "b",
+    "status": "failed",
+    "pipeline": "[{\"type\":\"agent\",\"name\":\"plan\",\"role\":\"architect\",\"prompt\":\"plan_lite\"},{\"type\":\"gate\",\"name\":\"plan_approved\",\"label\"
+exit 0
+
+### task show QA1
+QA1 [implement] qa QA1
+status: failed   project: qa-alpha   step: implement   qa cycles: 0   plan cycles: 0
+worktree: /fake/wt/QA1 (null)
+brief:
+  b
+steps:
+  implement      #1 failed   developer     10m   $7.84 5t error: x
+      x
+  implement      #2 failed   developer     10m   $11.32 10t error: x
+      x
+  implement      #3 failed   developer     10m   $6.77 146t error: x
+      x
+
+result: step 'implement' failed 3 times: x
+recent events:
+  02:04:06 step.failed          {"step":"implement","attempt":1,"cost_usd":7.84,"session_cost_usd":7.84,"estimated":false,"unknown":false,"tur
+  02:04:06 step.failed          {"step":"implement","attempt":2,"cost_usd":11.32,"session_cost_usd":19.16,"estimated":false,"unknown":false,"t
+  02:04:06 step.failed          {"step":"implement","attempt":3,"cost_usd":6.77,"session_cost_usd":6.77,"estimated":false,"unknown":false,"tur
+  02:04:06 task.failed          {"reason":"step 'implement' failed 3 times: x"}
+
+### task show QA2
+QA2 [implement] qa QA2
+status: failed   project: qa-alpha   step: implement   qa cycles: 0   plan cycles: 0
+worktree: /fake/wt/QA2 (null)
+brief:
+  b
+steps:
+  implement      #1 failed   developer     10m   $2.00 3t error: x
+      x
+  implement      #2 failed   developer     10m   ~$0.05 ~2t error: timeout after 90 min
+  implement      #3 failed   developer     10m   $0.95 4t error: x
+      x
+
+result: step 'implement' failed 3 times: x
+recent events:
+  02:04:06 step.failed          {"step":"implement","attempt":1,"cost_usd":2,"session_cost_usd":2,"estimated":false,"unknown":false,"turns":3,
+  02:04:06 step.failed          {"step":"implement","attempt":2,"cost_usd":0.054,"session_cost_usd":2.054,"estimated":true,"unknown":false,"tu
+  02:04:06 step.failed          {"step":"implement","attempt":3,"cost_usd":0.9460000000000002,"session_cost_usd":3,"estimated":false,"unknown"
+  02:04:06 task.failed          {"reason":"step 'implement' failed 3 times: x"}
+
+### task show QA3
+QA3 [implement] qa QA3
+status: running   project: qa-beta   step: implement   qa cycles: 0   plan cycles: 0
+worktree: /fake/wt/QA3 (null)
+brief:
+  b
+steps:
+  implement      #1 failed   developer     10m   $? 0t error: timeout after 90 min
+recent events:
+  02:04:06 step.failed          {"step":"implement","attempt":1,"cost_usd":0,"session_cost_usd":null,"estimated":false,"unknown":true,"turns":
+  02:04:06 scheduler.error      {"error":"project 'qa-beta' is no longer in config.toml"}
+
+### taskd log
+02:04:06 taskd listening on http://127.0.0.1:17955 (herdr: no, workers run as background processes)
+02:04:06 projects: (none configured)
+02:04:06 result QA1/implement#1: failed (x)
+02:04:06 result QA1/implement#2: failed (x)
+02:04:06 result QA1/implement#3: failed (x)
+02:04:06 result QA2/implement#1: failed (x)
+02:04:06 result QA2/implement#2: failed (timeout after 90 min)
+02:04:06 result QA2/implement#3: failed (x)
+02:04:06 result QA3/implement#1: failed (timeout after 90 min)
+02:04:06 failed QA1: step 'implement' failed 3 times: x
+02:04:06 failed QA2: step 'implement' failed 3 times: x
+02:04:06 advance QA3 failed: project 'qa-beta' is no longer in config.toml

@@ -42,7 +42,8 @@ function step(name: string, over: Partial<StepRow> = {}): StepRow {
   return {
     id: ++sid, task_id: "T9001", name, role: "r", status: "done", attempt: 1, session_id: null, resume_prompt: null, workspace_id: null,
     tab_id: null, pane_id: null, machine: null, started_at: null, finished_at: null, lease_until: null, result: null, error: null,
-    cost_usd: 0, turns: 0, timeout_min: null, created_at: "x", ...over,
+    cost_usd: 0, turns: 0, timeout_min: null, launch_started_at: null, launched_at: null, runner_seen_at: null,
+    session_cost_usd: null, cost_estimated: 0, cost_unknown: 0, created_at: "x", ...over,
   };
 }
 const block = (id: number, question: string): BlockRow => ({ id, task_id: "T9001", step_id: 1, question, answer: null, created_at: "x", answered_at: null });
@@ -80,6 +81,15 @@ test("merge gate reads handoff.md through a relative artifact path", () => {
   expect(d.verdicts).toEqual([{ step: "review", verdict: "pass", summary: "Looks good." }, { step: "test", verdict: "pass", summary: "All tests pass." }]);
   expect(d.facts).toEqual([{ label: "QA rounds", value: "2" }, { label: "Cost", value: "$1.75" }]);
   expect(d.commands).toEqual(["task approve T9001", 'task reject T9001 "<feedback>"']);
+});
+
+test("Cost fact marks estimated totals ~$ and unknown-only totals $?", () => {
+  const est = buildDecision(input({ steps: [...qaSteps().slice(0, 3), step("test", { result: so("pass", "All tests pass."), cost_usd: 0, cost_unknown: 1 })] }))!;
+  expect(est.facts.find(f => f.label === "Cost")!.value).toBe("~$1.50");
+  const estimated = buildDecision(input({ steps: qaSteps().map(s => s.name === "test" ? { ...s, cost_estimated: 1 } : s) }))!;
+  expect(estimated.facts.find(f => f.label === "Cost")!.value).toBe("~$1.75");
+  const unknown = buildDecision(input({ steps: qaSteps().map(s => ({ ...s, cost_usd: 0, cost_unknown: s.name === "review" ? 1 : 0 })) }))!;
+  expect(unknown.facts.find(f => f.label === "Cost")!.value).toBe("$?");
 });
 
 test("merge gate falls back to feature_dir/handoff.md, and Follow-ups 'None.' is omitted", () => {

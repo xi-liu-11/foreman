@@ -4,6 +4,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { DEFAULT_PRICING, PRICE_KEYS, type Pricing } from "./costs";
 
 export const FOREMAN_HOME = process.env.FOREMAN_HOME ?? join(homedir(), ".foreman");
 export const CONFIG_PATH = join(FOREMAN_HOME, "config.toml");
@@ -68,6 +69,7 @@ export interface ForemanConfig {
   defaults: Defaults;
   tickets: { linear?: { api_key?: string } };
   projects: Record<string, ProjectConfig>;
+  pricing: Pricing;        // USD per million tokens per model, for estimates of killed runs
 }
 
 export const GLOBAL_DENY = [
@@ -154,6 +156,15 @@ deny = []
 # [tickets.linear]
 # api_key = "lin_api_..."   # or set LINEAR_API_KEY in taskd's environment
 
+# Prices for estimating killed runs from the session log, USD per million tokens.
+# A table merges over the built-in defaults per model and per key.
+# [pricing."claude-opus-5-5"]
+# input = 4
+# output = 20
+# cache_read = 0.20
+# cache_write_5m = 5
+# cache_write_1h = 8
+
 # One table per project. Only listed projects can receive tasks.
 # [projects.dicer]
 # path = "~/git/dicer"
@@ -222,7 +233,31 @@ export function loadConfig(): ForemanConfig {
     };
   }
   const tickets = { linear: raw.tickets?.linear ? { api_key: raw.tickets.linear.api_key ? String(raw.tickets.linear.api_key) : undefined } : undefined };
-  return { server, defaults, tickets, projects };
+  return { server, defaults, tickets, projects, pricing: parsePricing(raw.pricing) };
+}
+
+// The [pricing] table: model -> { input, output, cache_read, cache_write_5m,
+// cache_write_1h } in USD per MTok, merged per model and key over the defaults.
+// Non-numeric or negative values are dropped with a warning.
+export function parsePricing(raw: unknown): Pricing {
+  const out: Pricing = Object.fromEntries(Object.entries(DEFAULT_PRICING).map(([m, p]) => [m, { ...p }]));
+  if (raw === undefined || raw === null) return out;
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    console.warn("config: pricing is not a table, ignored");
+    return out;
+  }
+  for (const [model, t] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof t !== "object" || t === null || Array.isArray(t)) { console.warn(`config: pricing.${model} is not a table, ignored`); continue; }
+    const base = out[model] ?? { input: 0, output: 0, cache_read: 0, cache_write_5m: 0, cache_write_1h: 0 };
+    const next = { ...base };
+    for (const [k, v] of Object.entries(t as Record<string, unknown>)) {
+      if (!(PRICE_KEYS as readonly string[]).includes(k)) console.warn(`config: pricing.${model}.${k} is not a known key, ignored`);
+      else if (typeof v === "number" && Number.isFinite(v) && v >= 0) next[k as keyof typeof next] = v;
+      else console.warn(`config: pricing.${model}.${k} = ${JSON.stringify(v)} is not a non-negative number, ignored`);
+    }
+    out[model] = next;
+  }
+  return out;
 }
 
 // A step_timeouts table (inline or sub-table): step name -> minutes. Keeps

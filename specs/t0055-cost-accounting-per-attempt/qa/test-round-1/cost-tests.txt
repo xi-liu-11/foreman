@@ -1,0 +1,29 @@
+bun test v1.4.4 (38afee6c8)
+
+test/cost-accounting.test.ts:
+02:04:18 result CA1/implement#1: failed (x)
+02:04:18 result CA1/implement#2: failed (x)
+02:04:18 result CA1/implement#3: failed (x)
+02:04:18 result CA2/implement#1: failed (x)
+02:04:18 result CA2/implement#2: failed (timeout after 90 min)
+02:04:18 result CA2/implement#3: failed (x)
+02:04:18 result CA3/implement#1: failed (x)
+02:04:18 result CA3/implement#2: failed (timeout after 90 min)
+02:04:18 result CA3/implement#3: failed (x)
+02:04:18 result CA4/implement#1: failed (timeout after 90 min)
+02:04:18 result CA5/implement#1: failed (timeout after 90 min)
+02:04:18 result CA5/implement#2: failed (timeout after 90 min)
+02:04:18 cost unknown for CA5/implement#3: no price for gpt-9
+02:04:18 result CA5/implement#3: failed (timeout after 90 min)
+02:04:18 lease expired for CA6/implement#1
+02:04:18 lease expired for CA7/implement#1
+02:04:18 lease expired for CA8/implement#1
+02:04:18 failed CA1: step 'implement' failed 3 times: x
+02:04:18 failed CA2: step 'implement' failed 3 times: x
+02:04:18 failed CA3: step 'implement' failed 3 times: x
+02:04:18 failed CA5: step 'implement' failed 3 times: timeout after 90 min
+
+ 23 pass
+ 0 fail
+ 1248 expect() calls
+Ran 23 tests across 4 files. [681.00ms]

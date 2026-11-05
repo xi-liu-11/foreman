@@ -261,6 +261,63 @@ The restart is safe while steps run: the migration only adds columns, startup
 extends every running lease, and runners started by the old taskd check in on
 their next heartbeat.
 
+### Costs
+
+Claude's `total_cost_usd` is cumulative over a session, including across
+`--resume`. Each step therefore stores the raw figure in `steps.session_cost_usd`
+and its own share in `cost_usd`: the raw value minus the largest
+`session_cost_usd` of an earlier attempt with the same session id (the full
+value for a session's first attempt). A task's cost is the sum of its steps, so
+resumed attempts no longer double count. Turns (`num_turns`) are per process and
+are stored as reported.
+
+A step that ends without a `result` (timeout or cancel, lease expired, tab
+closed) is estimated from the Claude Code session log,
+`~/.claude/projects/<slug of cwd>/<session id>.jsonl` (or
+`$CLAUDE_CONFIG_DIR/projects/…`) plus its `subagents/` files: assistant
+messages inside the attempt's window, deduplicated by message id, priced with
+`[pricing]`. Estimated turns are the number of main-session API calls. The
+runner computes the usage on its own machine and sends it with the report; for a
+lease expiry on the local machine taskd reads the log itself. The log is only
+read, and only its usage fields. Estimates show as `~$4.30` (and `~12t`) in
+`task ls`, `task show`, `task watch` and the dashboard; a task total with any
+estimated or unknown step shows `~$X`.
+
+When no session log is found (no session id, a remote runner that sent no
+usage) or a model has no price, the step records `cost_unknown = 1` and shows
+`$?` rather than `$0.00`. Its session total stays at the previous attempt's, so
+the next resumed attempt absorbs the cost and the task total stays right.
+
+Prices are USD per million tokens, one table per model, merged over the
+built-in defaults per key. A model id with a suffix (`claude-opus-5-5-2026…`,
+`…[1m]`) uses the longest priced prefix:
+
+```toml
+[pricing."claude-opus-5-5"]
+input = 4
+output = 20
+cache_read = 0.20
+cache_write_5m = 5
+cache_write_1h = 8
+```
+
+Defaults ship for opus-5-5, sonnet-5-5, haiku-5-5 and fable-5-1. The sonnet
+`cache_read` default ($0.10) is the price measured from a real run's
+`modelUsage.costUSD` (the T0039 fixture in `test/fixtures/costs/`), not the
+published table; `test/costs.test.ts` checks the estimator against that run to
+within 1 %.
+
+`task ls` ends with today's totals, by `finished_at` on taskd's local day, from
+`GET /costs/today`: `today: $12.34 (2 estimated) · foreman $10.00 · tackle-tally
+~$2.34 (2 estimated)` (only the named project with `--project`; never with
+`--json`). The dashboard header shows the same total.
+
+The first taskd start after this change runs a one-off migration (meta key
+`migration:cost_deltas_v1`, event `costs.migrated`): every step's old
+`cost_usd` is copied to `session_cost_usd`, then steps sharing a session id get
+their per-attempt deltas. Nothing is lost: the old figures stay in
+`session_cost_usd`. History is not backfilled with estimates.
+
 ### Resource leases
 
 A resource lease is an exclusive, named hold on a shared device (a simulator, an
@@ -341,7 +398,12 @@ A running taskd must be restarted to pick this up: `foreman service restart`.
 
 `bun test` runs `test/leases.test.ts`, the lease policy against a temp store,
 `test/lane.test.ts`, the pure lane policies and `parseLane`, and
-`test/lane-cli.test.ts`, the CLI rendering of lanes.
+`test/lane-cli.test.ts`, the CLI rendering of lanes. `test/costs.test.ts` covers
+the session-log estimator (against the stripped T0039 fixture), pricing and the
+cost formats, `test/cost-migration.test.ts` the one-off cost migration on an
+old-schema DB, `test/cost-accounting.test.ts` the per-attempt deltas, kill and
+lease-expiry estimates and `/costs/today`, and `test/cost-cli.test.ts` the cost
+cells and the `today:` footer.
 
 `test/smoke.sh` runs an isolated taskd on port 7778 with `test/fake-claude.sh`
 standing in for `claude` (set via `FOREMAN_CLAUDE_BIN`). `test/fake-gh.sh` stands in for `gh` and `test/fake-linear.ts` for Linear's API. It drives the happy,

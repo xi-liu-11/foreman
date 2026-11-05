@@ -5,6 +5,7 @@ import { existsSync, openSync, readSync, closeSync, statSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import type { TaskRow, StepRow, BlockRow, ArtifactRow } from "./db";
 import type { PipelineStep } from "./pipelines";
+import { fmtTaskCost } from "./costs";
 
 export interface DecisionSection { heading: string; body: string; format: "markdown" | "text" }
 export interface Decision {
@@ -99,7 +100,7 @@ const verdictOf = (row: StepRow | null) => {
 export function buildDecision(input: DecisionInput, read: (absPath: string) => string | null = safeRead): Decision | null {
   const { task, steps, blocks, artifacts, pipeline } = input;
   const id = task.id;
-  const cost = "$" + steps.reduce((a, s) => a + (s.cost_usd || 0), 0).toFixed(2);
+  const cost = fmtTaskCost(steps.reduce((a, s) => a + (s.cost_usd || 0), 0), steps.filter(s => s.cost_estimated).length, steps.filter(s => s.cost_unknown).length);
   const base = { warning: null, facts: [], verdicts: [], sections: [], findings: [], source: null } as Pick<Decision, "warning" | "facts" | "verdicts" | "sections" | "findings" | "source">;
   const gateCmds = [`task approve ${id}`, `task reject ${id} "<feedback>"`];
 

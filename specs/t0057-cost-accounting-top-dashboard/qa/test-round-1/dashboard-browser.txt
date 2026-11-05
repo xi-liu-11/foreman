@@ -1,0 +1,77 @@
+### GET /costs/today
+{"day":"2026-11-05","total":{"usd":3.9,"estimated":2,"unknown":1,"steps":4},"projects":{"qa-dash":{"usd":3.9,"estimated":2,"unknown":1,"steps":4}}}
+
+### task show D1
+D1 [implement] qa D1
+status: failed   project: qa-dash   step: implement   qa cycles: 0   plan cycles: 0
+worktree: /fake/wt/D1 (null)
+decision: Failed: x broke
+  Step: implement
+  Attempt: #1
+  Cost: ~$1.20
+  Error:
+    x broke
+  run: task retry D1
+  run: task retry D1 --fresh
+brief:
+  b
+steps:
+  implement      #1 failed   developer     10m   ~$1.20 ~3t
+
+result: x broke
+recent events:
+
+### task show D4
+D4 [implement] qa D4
+status: gate   project: qa-dash   step: plan_approved   qa cycles: 0   plan cycles: 0
+gate: Approve the plan
+worktree: /fake/wt/D4 (null)
+decision: Plan: (no plan summary)
+  Cost: ~$1.50
+  Plan:
+    (no plan summary)
+  run: task approve D4
+  run: task reject D4 "<feedback>"
+brief:
+  b
+steps:
+  plan           #1 done     developer     10m   ~$1.50 ~2t
+recent events:
+
+### task show D5
+D5 [implement] qa D5
+status: running   project: qa-dash   step: implement   qa cycles: 0   plan cycles: 0
+worktree: /fake/wt/D5 (null)
+brief:
+  b
+steps:
+  implement      #1 running  developer     10m   $0.00 0t
+      runner seen 1m ago
+recent events:
+
+### task show D6
+D6 [implement] qa D6
+status: running   project: qa-dash   step: implement   qa cycles: 0   plan cycles: 0
+worktree: /fake/wt/D6 (null)
+brief:
+  b
+steps:
+  implement      #1 running  developer     10m   $0.00 0t
+      runner not seen yet (launch started 2m ago)
+recent events:
+
+### task ls --all
+ID     STATUS    PROJECT        KIND           STEP           AGE   COST     Q  TITLE
+D1     failed    qa-dash        implement      implement      13s   ~$1.20      qa D1
+D2     failed    qa-dash        implement      implement      13s   $?          qa D2
+D3     failed    qa-dash        implement      implement      13s   $1.20       qa D3
+D4     gate      qa-dash        implement      plan_approved  13s   ~$1.50      qa D4
+D5     running   qa-dash        implement      implement      13s   $0.00       qa D5
+D6     running   qa-dash        implement      implement      13s   $0.00       qa D6
+
+today: ~$3.90 (2 estimated, 1 unknown) · qa-dash ~$3.90 (2 estimated, 1 unknown)
+
+### taskd log
+04:01:03 startup: extended 2 running lease(s) by 150s
+04:01:03 taskd listening on http://127.0.0.1:17957 (herdr: no, workers run as background processes)
+04:01:03 projects: (none configured)

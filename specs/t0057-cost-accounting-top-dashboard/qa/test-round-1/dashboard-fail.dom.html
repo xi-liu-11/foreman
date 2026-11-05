@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Foreman</title>
+<style>
+  :root { --bg:#fafaf8; --fg:#1b1b1b; --mute:#6b6b6b; --line:#e3e1dc; --card:#fff; --accent:#2f6fed; --warn:#b8860b; --bad:#c0392b; --ok:#2e8b57; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#141413; --fg:#ececea; --mute:#9a9a96; --line:#2c2c2a; --card:#1d1d1c; --accent:#7aa2ff; --warn:#e2b53f; --bad:#ff6b5b; --ok:#5fc48b; } }
+  * { box-sizing:border-box }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.45 ui-sans-serif,system-ui,sans-serif; padding:16px; }
+  h1 { font-size:18px; margin:0 0 4px; display:flex; gap:12px; align-items:baseline }
+  h1 small { color:var(--mute); font-weight:normal; font-size:12px }
+  section { margin-top:12px }
+  h2 { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--mute); margin:0 0 4px; display:flex; gap:8px; align-items:baseline }
+  h3 { font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--mute); margin:0 0 4px }
+  .lnk { font:inherit; font-size:11px; text-transform:none; letter-spacing:0; background:none; border:0; padding:0; color:var(--accent); cursor:pointer }
+  .lnk:hover { text-decoration:underline }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:4px 10px; margin-bottom:4px }
+  .head { display:flex; gap:8px; align-items:baseline; white-space:nowrap; overflow:hidden; line-height:22px; cursor:pointer }
+  .head > * { flex:none }
+  .head .title { flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis }
+  .head .lead { flex:1 1 0; min-width:0; overflow:hidden; text-overflow:ellipsis; color:var(--warn); font-size:12px }
+  .head .meta, .head .cur { overflow:hidden; text-overflow:ellipsis }
+  .body { display:none; padding:6px 0 4px }
+  .card.open > .body { display:block }
+  .decision { border-left:3px solid var(--warn); background:color-mix(in srgb, var(--warn) 6%, var(--card)); padding:6px 10px; margin-bottom:8px }
+  .decision .warning { color:var(--bad); font-weight:600; margin:2px 0 }
+  .decision p, .decision ul { margin:2px 0 }
+  .decision ul { padding-left:20px }
+  .mh { font-weight:600; font-size:12px; margin:6px 0 2px }
+  .pre { white-space:pre-wrap; font-size:13px }
+  .cmds { margin:4px 0 0; padding:4px 8px; border:1px solid var(--line); border-radius:4px; font:12px ui-monospace,monospace; white-space:pre-wrap; overflow-x:auto }
+  code { font-family:ui-monospace,monospace; font-size:12px }
+  .activity { border-top:1px solid var(--line); margin-top:8px; padding-top:6px }
+  .row { display:flex; gap:10px; align-items:baseline; flex-wrap:wrap }
+  .id { font-family:ui-monospace,monospace; color:var(--mute) }
+  .title { font-weight:600 }
+  .badge { font-size:11px; padding:1px 7px; border-radius:10px; border:1px solid var(--line); color:var(--mute) }
+  .badge.running { border-color:var(--accent); color:var(--accent) }
+  .badge.blocked, .badge.gate { border-color:var(--warn); color:var(--warn) }
+  .badge.failed { border-color:var(--bad); color:var(--bad) }
+  .badge.done { border-color:var(--ok); color:var(--ok) }
+  .badge.superseded { border-style:dashed }
+  .meta { color:var(--mute); font-size:12px }
+  .steps { display:flex; gap:4px; flex-wrap:wrap; margin:4px 0 }
+  .step { font-size:11px; padding:2px 8px; border-radius:4px; border:1px solid var(--line); color:var(--mute) }
+  .step.done, .step.pass { color:var(--ok); border-color:var(--ok) }
+  .step.running { color:var(--accent); border-color:var(--accent) }
+  .step.failed, .step.fail { color:var(--bad); border-color:var(--bad) }
+  .step.gate, .step.blocked { color:var(--warn); border-color:var(--warn) }
+  .note { font-size:13px; margin:4px 0 0; white-space:pre-wrap }
+  .note time { color:var(--mute); font-family:ui-monospace,monospace; font-size:11px; margin-right:8px }
+  .ask { border-left:3px solid var(--warn); padding-left:10px; margin:8px 0 }
+  .empty { color:var(--mute) }
+  table { border-collapse:collapse; width:100% }
+  td, th { text-align:left; padding:2px 8px 2px 0; border-bottom:1px solid var(--line); font-size:13px; vertical-align:top }
+  th { color:var(--mute); font-weight:normal; font-size:11px; text-transform:uppercase }
+  .err { color:var(--bad) }
+</style>
+</head>
+<body>
+<h1>Foreman <small id="status">2 running · 4 need you · 3 failed · 0 superseded · refreshed 14:01:21</small></h1>
+<section><h2>Needs you <button class="lnk" data-expand="inbox">Expand all</button><button class="lnk" data-collapse="inbox">Collapse all</button></h2><div id="inbox" class=""><div class="card open" data-id="D4">
+    <div class="head"><span class="id">D4</span><span class="title" title="qa D4">qa D4</span><span class="badge gate">gate</span>
+      <span class="meta">qa-dash · implement · ~$1.50 · 18s</span><span class="lead" title="Plan: (no plan summary)">Plan: (no plan summary)</span></div>
+    <div class="body"><div class="decision"><h3>Decision — Approve the plan</h3><div class="meta">Cost: ~$1.50</div><div class="mh">Plan</div><div class="pre">(no plan summary)</div><pre class="cmds">task approve D4
+task reject D4 "&lt;feedback&gt;"</pre></div><div class="activity"><h3>Activity</h3>
+    <div class="steps"><span class="step done" title="">plan</span><span class="step " title="">plan_approved</span><span class="step " title="">implement</span><span class="step " title="">review</span><span class="step " title="">test</span><span class="step " title="">handoff</span><span class="step " title="">merge_approved</span><span class="step " title="">merge</span></div>
+    
+    
+    
+    
+    
+  </div></div>
+  </div><div class="card open" data-id="D1">
+    <div class="head"><span class="id">D1</span><span class="title" title="qa D1">qa D1</span><span class="badge failed">failed</span>
+      <span class="meta">qa-dash · implement · ~$1.20 · 18s</span><span class="lead" title="Failed: x broke">Failed: x broke</span></div>
+    <div class="body"><div class="decision"><h3>Decision — Failed</h3><div class="meta">Step: implement · Attempt: #1 · Cost: ~$1.20</div><div class="mh">Error</div><div class="pre">x broke</div><pre class="cmds">task retry D1
+task retry D1 --fresh</pre></div><div class="activity"><h3>Activity</h3>
+    <div class="steps"><span class="step " title="">plan</span><span class="step " title="">plan_approved</span><span class="step failed" title="">implement</span><span class="step " title="">review</span><span class="step " title="">test</span><span class="step " title="">handoff</span><span class="step " title="">merge_approved</span><span class="step " title="">merge</span></div>
+    
+    
+    
+    
+    
+  </div></div>
+  </div><div class="card open" data-id="D2">
+    <div class="head"><span class="id">D2</span><span class="title" title="qa D2">qa D2</span><span class="badge failed">failed</span>
+      <span class="meta">qa-dash · implement · $? · 18s</span><span class="lead" title="Failed: x broke">Failed: x broke</span></div>
+    <div class="body"><div class="decision"><h3>Decision — Failed</h3><div class="meta">Step: implement · Attempt: #1 · Cost: $?</div><div class="mh">Error</div><div class="pre">x broke</div><pre class="cmds">task retry D2
+task retry D2 --fresh</pre></div><div class="activity"><h3>Activity</h3>
+    <div class="steps"><span class="step " title="">plan</span><span class="step " title="">plan_approved</span><span class="step failed" title="">implement</span><span class="step " title="">review</span><span class="step " title="">test</span><span class="step " title="">handoff</span><span class="step " title="">merge_approved</span><span class="step " title="">merge</span></div>
+    
+    
+    
+    
+    
+  </div></div>
+  </div><div class="card open" data-id="D3">
+    <div class="head"><span class="id">D3</span><span class="title" title="qa D3">qa D3</span><span class="badge failed">failed</span>
+      <span class="meta">qa-dash · implement · $1.20 · 18s</span><span class="lead" title="Failed: x broke">Failed: x broke</span></div>
+    <div class="body"><div class="decision"><h3>Decision — Failed</h3><div class="meta">Step: implement · Attempt: #1 · Cost: $1.20</div><div class="mh">Error</div><div class="pre">x broke</div><pre class="cmds">task retry D3
+task retry D3 --fresh</pre></div><div class="activity"><h3>Activity</h3>
+    <div class="steps"><span class="step " title="">plan</span><span class="step " title="">plan_approved</span><span class="step failed" title="">implement</span><span class="step " title="">review</span><span class="step " title="">test</span><span class="step " title="">handoff</span><span class="step " title="">merge_approved</span><span class="step " title="">merge</span></div>
+    
+    
+    
+    
+    
+  </div></div>
+  </div></div></section>
+<section id="devices-sec" hidden=""><h2>Devices</h2><div id="devices"><span class="empty">no shared devices</span></div></section>
+<section><h2>Active <button class="lnk" data-expand="active">Expand all</button><button class="lnk" data-collapse="active">Collapse all</button></h2><div id="active" class=""><div class="card" data-id="D5">
+    <div class="head"><span class="id">D5</span><span class="title" title="qa D5">qa D5</span><span class="badge running">running</span>
+      <span class="meta">qa-dash · implement · $0.00 · 18s</span><span class="meta cur">implement for 10m</span></div>
+    <div class="body"><div class="activity"><h3>Activity</h3>
+    <div class="steps"><span class="step " title="">plan</span><span class="step " title="">plan_approved</span><span class="step running" title="">implement 10m</span><span class="step " title="">review</span><span class="step " title="">test</span><span class="step " title="">handoff</span><span class="step " title="">merge_approved</span><span class="step " title="">merge</span></div>
+    
+    
+    
+    
+    
+  </div></div>
+  </div><div class="card" data-id="D6">
+    <div class="head"><span class="id">D6</span><span class="title" title="qa D6">qa D6</span><span class="badge running">running</span>
+      <span class="meta">qa-dash · implement · $0.00 · 18s</span><span class="meta cur">implement for 10m</span></div>
+    <div class="body"><div class="activity"><h3>Activity</h3>
+    <div class="steps"><span class="step " title="">plan</span><span class="step " title="">plan_approved</span><span class="step running" title="">implement 10m</span><span class="step " title="">review</span><span class="step " title="">test</span><span class="step " title="">handoff</span><span class="step " title="">merge_approved</span><span class="step " title="">merge</span></div>
+    
+    
+    
+    
+    
+  </div></div>
+  </div></div></section>
+<section><h2>Recent</h2><div id="recent"><span class="empty">none</span></div></section>
+<script>
+const qs = new URLSearchParams(location.search);
+if (qs.get("token")) { try { localStorage.setItem("foreman_token", qs.get("token")); } catch {} history.replaceState(null, "", location.pathname); }
+let token = ""; try { token = localStorage.getItem("foreman_token") || ""; } catch {}
+const api = p => fetch(p, { headers: { authorization: "Bearer " + token } }).then(r => { if (!r.ok) throw new Error(r.status + " " + p); return r.json(); });
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const inl = s => s.replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
+// tiny markdown over escaped text: headings, bullet lists, paragraphs, `code`, **bold**
+function md(src) {
+  const out = []; let list = [], para = [];
+  const flush = () => { if (list.length) out.push("<ul>" + list.join("") + "</ul>"); if (para.length) out.push("<p>" + para.join(" ") + "</p>"); list = []; para = []; };
+  for (const line of esc(src).split("\n")) {
+    let m;
+    if (!line.trim()) flush();
+    else if ((m = line.match(/^#{1,6} +(.*)$/))) { flush(); out.push(`<div class="mh">${inl(m[1])}</div>`); }
+    else if ((m = line.match(/^\s*(?:[-*]|\d+\.) +(.*)$/))) { if (para.length) flush(); list.push(`<li>${inl(m[1])}</li>`); }
+    else { if (list.length) flush(); para.push(inl(line.trim())); }
+  }
+  flush(); return out.join("");
+}
+localStorage.foreman_open = JSON.stringify(["D1","D2","D3","D4"]); let open = new Set(); try { open = new Set(JSON.parse(localStorage.foreman_open || "[]")); } catch {}
+const save = () => { try { localStorage.foreman_open = JSON.stringify([...open]); } catch {} };
+const sectionIds = k => [...document.querySelectorAll(`#${k} > .card`)].map(c => c.dataset.id);
+const applyOpen = () => document.querySelectorAll(".card[data-id]").forEach(c => c.classList.toggle("open", open.has(c.dataset.id)));
+document.addEventListener("click", e => {
+  const b = e.target.closest("[data-expand],[data-collapse]");
+  if (b) { const k = b.dataset.expand || b.dataset.collapse; for (const id of sectionIds(k)) b.dataset.expand ? open.add(id) : open.delete(id); applyOpen(); save(); return; }
+  const h = e.target.closest(".card > .head");
+  if (!h || e.target.closest("a")) return;
+  const c = h.parentElement, id = c.dataset.id;
+  open.has(id) ? open.delete(id) : open.add(id); c.classList.toggle("open", open.has(id)); save();
+});
+const ago = iso => { if (!iso) return ""; const s = Math.max(0, (Date.now() - Date.parse(iso)) / 1000); return s < 60 ? Math.round(s) + "s" : s < 3600 ? Math.round(s / 60) + "m" : s < 86400 ? Math.round(s / 3600) + "h" : Math.round(s / 86400) + "d"; };
+const dur = (a, b) => { if (!a) return ""; const s = ((b ? Date.parse(b) : Date.now()) - Date.parse(a)) / 1000; return s < 60 ? Math.round(s) + "s" : Math.round(s / 60) + "m"; };
+const secs = n => { const s = Math.max(0, Number(n) || 0); return s < 60 ? Math.round(s) + "s" : s < 3600 ? Math.round(s / 60) + "m" : Math.round(s / 3600) + "h"; };
+const money = (n, est, unk) => { n = Number(n || 0); est = est || 0; unk = unk || 0; return n === 0 && unk > 0 ? "$?" : (est > 0 || unk > 0) && n > 0 ? "~$" + n.toFixed(2) : "$" + n.toFixed(2); };
+
+function pipelineSteps(t, steps) {
+  const names = JSON.parse(t.pipeline).map(s => s.type === "parallel" ? s.children.map(c => c.name) : [s.name]).flat();
+  return names.map(n => {
+    const rows = steps.filter(s => s.name === n); const last = rows[rows.length - 1];
+    const r = last?.result ? JSON.parse(last.result) : null;
+    const cls = !last ? "" : last.status === "done" && r?.verdict === "fail" ? "fail" : last.status;
+    const extra = last ? (rows.length > 1 ? " ×" + rows.length : "") + (last.status === "running" ? " " + dur(last.started_at) : "") : "";
+    return `<span class="step ${cls}" title="${esc(last?.error || r?.summary || "")}">${n}${extra}</span>`;
+  }).join("");
+}
+
+// Devices: one card per project that declares resources (or browser verify) or has lease rows
+function devices(projects, leases, lanes) {
+  const who = r => `${r.task_id} ${r.step}#${r.attempt}`;
+  const cards = projects.map(p => {
+    const declared = [...(p.resources ?? []), ...(p.verify === "browser" ? ["browser"] : [])];
+    const rows = leases.filter(l => l.project === p.name);
+    const keys = new Map(); // "machine\0resource" -> {machine, resource}
+    for (const r of declared) keys.set("local\0" + r, { machine: "local", resource: r });
+    for (const l of rows) keys.set(l.machine + "\0" + l.resource, { machine: l.machine, resource: l.resource });
+    const pl = (lanes?.lanes ?? []).filter(l => l.project === p.name), ps = lanes?.projects?.[p.name];
+    if (!keys.size && !pl.length) return "";
+    const laneHtml = pl.map(l => `<div class="meta">${l.machine && l.machine !== "local" ? esc(l.machine) + " · " : ""}${esc(l.group)} · cap ${l.capacity} · device steps ${ps?.device_running ?? 0}/${ps?.device_steps_running ?? 0}</div>`
+      + l.holders.map(h => `<div class="meta ${h.overdue ? "err" : ""}">${esc(h.task_id)}/${esc(h.step)}#${h.attempt} · ${esc(h.resources.join(", "))} · held ${Math.round(h.held_min)}m${h.expect_min != null ? " / expect " + Math.round(h.expect_min) + "m" : ""}${h.overdue ? " (overdue)" : ""}</div>`).join("")
+      + l.waiters.map(w => `<div class="meta">${w.position}. ${esc(w.task_id)}/${esc(w.step)}#${w.attempt} · ${esc(w.resource)} · eta ~${Math.round(w.eta_min)}m</div>`).join("")).join("");
+    const trs = [...keys.values()].map(k => {
+      const mine = rows.filter(l => l.machine === k.machine && l.resource === k.resource);
+      const held = mine.find(l => l.state === "held");
+      const queue = mine.filter(l => l.state === "waiting").sort((a, b) => a.position - b.position);
+      const holder = held ? `<span class="${held.overdue ? "err" : ""}">${esc(who(held))} · ${secs(held.held_sec)}${held.reason ? " · " + esc(held.reason) : ""}${held.overdue ? " (overdue)" : ""}</span>` : `<span class="empty">free</span>`;
+      return `<tr><td>${k.machine !== "local" ? `<span class="meta">${esc(k.machine)}</span> ` : ""}${esc(k.resource)}</td><td>${holder}</td><td class="meta">${queue.map(q => esc(who(q))).join(", ")}</td></tr>`;
+    }).join("");
+    return `<div class="card"><div class="title">${esc(p.name)}</div>${laneHtml}${trs ? `<table>${trs}</table>` : ""}</div>`;
+  }).join("");
+  return cards || `<span class="empty">no shared devices</span>`;
+}
+
+function decisionHtml(dec) {
+  const sec = x => `<div class="mh">${esc(x.heading)}</div>` + (x.format === "markdown" ? md(x.body) : `<div class="pre">${esc(x.body)}</div>`);
+  return `<div class="decision"><h3>Decision — ${esc(dec.title)}</h3>`
+    + (dec.warning ? `<div class="warning">${esc(dec.warning)}</div>` : "")
+    + ((dec.facts ?? []).length ? `<div class="meta">${dec.facts.map(f => esc(f.label) + ": " + esc(f.value)).join(" · ")}</div>` : "")
+    + (dec.verdicts ?? []).map(v => `<div class="meta"><span class="step ${v.verdict === "pass" ? "pass" : "fail"}">${esc(v.verdict)}</span> ${esc(v.step)} — ${esc(v.summary)}</div>`).join("")
+    + (dec.sections ?? []).map(sec).join("")
+    + ((dec.findings ?? []).length ? `<ul>${dec.findings.map(f => `<li>${esc(f)}</li>`).join("")}</ul>` : "")
+    + ((dec.commands ?? []).length ? `<pre class="cmds">${dec.commands.map(esc).join("\n")}</pre>` : "")
+    + `</div>`;
+}
+
+function activityHtml(t, d) {
+  const steps = d?.steps ?? [];
+  const notes = (d?.events ?? []).filter(e => e.type === "note" || e.type === "task.qa_fail" || e.type === "task.plan_qa_fail" || e.type === "task.rejected" || e.type === "step.failed" || e.type === "ticket.comment" || e.type === "lease.overdue").slice(-4);
+  const lease = leaseText(d);
+  const bits = [t.plan_cycles > 0 ? "plan cycles " + t.plan_cycles : "", t.qa_cycles > 0 ? "failed QA cycles " + t.qa_cycles : "", t.branch ? esc(t.branch) : "", t.pr_url ? `<a href="${esc(t.pr_url)}">PR</a>` : ""].filter(Boolean);
+  return `<div class="activity"><h3>Activity</h3>
+    ${d ? `<div class="steps">${pipelineSteps(t, steps)}</div>` : ""}
+    ${d?.decision ? "" : (d?.blocks ?? []).map(b => `<div class="ask"><b>Question</b> (block ${b.id}): ${esc(b.question)}</div>`).join("")}
+    ${lease ? `<div class="meta">${lease}</div>` : ""}
+    ${bits.length ? `<div class="meta">${bits.join(" · ")}</div>` : ""}
+    ${!d?.decision && t.status === "failed" && t.result ? `<div class="ask err">${esc(JSON.parse(t.result).error || "")}</div>` : ""}
+    ${notes.map(e => { const x = JSON.parse(e.data); const txt = e.type === "note" ? x.text : e.type === "task.plan_qa_fail" ? `plan QA review ${x.cycle} failed; ${x.revising ? "revising" : "going to the gate"}` : e.type === "task.rejected" ? `rejected at ${x.gate}: ${x.feedback}` : e.type === "task.qa_fail" ? `QA cycle ${x.cycle} failed: ${x.failed.join(", ")}` : e.type === "ticket.comment" ? `ticket ${x.ref}: ${x.body}` : e.type === "lease.overdue" ? `${x.resource} held ${x.held_min}m (max ${x.max_min})` : `${x.step} failed: ${x.error}`; return `<p class="note"><time>${e.ts.slice(11, 16)}</time>${esc(txt)}</p>`; }).join("")}
+  </div>`;
+}
+
+const leaseText = d => (d?.leases ?? []).map(l => l.state === "held" ? `holds ${esc(l.resource)} ${secs(l.held_sec)}${l.expect_min != null ? ` · expect ~${Math.round(l.expect_min)}m` : ""}` : `waiting #${l.position} for ${esc(l.resource)}${l.eta_min != null ? ` · eta ~${Math.round(l.eta_min)}m` : ""}`).join(", ");
+
+function card(t, d) {
+  const steps = d?.steps ?? [];
+  const revising = !!t.rejection && ["queued", "running", "blocked"].includes(t.status);
+  // A lease always belongs to a running step, so show both: "test for 11m · waiting #1 for sim-a · eta ~18m".
+  const cur = [steps.filter(s => s.status === "running").map(s => `${s.name} for ${dur(s.started_at)}`).join(", "), (d?.leases ?? []).slice(0, 1).map(l => leaseText({ leases: [l] })).join("")].filter(Boolean).join(" · ");
+  const lead = d?.decision?.lead || (t.status === "gate" ? t.gate_label || "" : "");
+  return `<div class="card${open.has(t.id) ? " open" : ""}" data-id="${esc(t.id)}">
+    <div class="head"><span class="id">${t.id}</span><span class="title" title="${esc(t.title)}">${esc(t.title)}</span><span class="badge ${revising ? "blocked" : t.status}">${revising ? "rejected, revising" : t.status}</span>
+      <span class="meta">${esc(t.project)} · ${t.kind} · ${money(t.cost_usd, t.cost_estimated, t.cost_unknown)} · ${ago(t.created_at)}</span>${cur ? `<span class="meta cur">${cur}</span>` : ""}${lead ? `<span class="lead" title="${esc(lead)}">${esc(lead)}</span>` : ""}</div>
+    <div class="body">${d?.decision ? decisionHtml(d.decision) : ""}${activityHtml(t, d)}</div>
+  </div>`;
+}
+
+async function refresh() {
+  try {
+    const all = await api("/tasks?all=1");
+    const [leases, projects, lanes, today] = await Promise.all([api("/leases"), api("/projects"), api("/lanes"), api("/costs/today").catch(() => null)]);
+    const dev = devices(projects, leases, lanes);
+    document.getElementById("devices").innerHTML = dev;
+    document.getElementById("devices-sec").hidden = dev.startsWith("<span");
+    const active = all.filter(t => ["queued", "running", "blocked", "gate"].includes(t.status));
+    const needs = active.filter(t => t.status === "gate" || t.open_blocks > 0).concat(all.filter(t => t.status === "failed").slice(0, 5));
+    const details = Object.fromEntries(await Promise.all(active.concat(needs.filter(t => !active.includes(t))).map(async t => [t.id, await api("/tasks/" + t.id)])));
+    const rest = active.filter(t => !needs.includes(t));
+    const y = window.scrollY, ib = document.getElementById("inbox"), ac = document.getElementById("active");
+    ib.innerHTML = needs.length ? needs.map(t => card(t, details[t.id])).join("") : "nothing"; ib.classList.toggle("empty", !needs.length);
+    ac.innerHTML = rest.length ? rest.map(t => card(t, details[t.id])).join("") : "no active tasks"; ac.classList.toggle("empty", !rest.length);
+    if (window.scrollY !== y) window.scrollTo(0, y);
+    const ids = new Set(all.map(t => t.id)); let pruned = false;
+    for (const id of [...open]) if (!ids.has(id)) { open.delete(id); pruned = true; }
+    if (pruned) save();
+    const recent = all.filter(t => !active.includes(t) && !needs.includes(t)).slice(0, 15);
+    document.getElementById("recent").innerHTML = recent.length ? `<table><tr><th>id</th><th>status</th><th>project</th><th>kind</th><th>age</th><th>cost</th><th>title</th></tr>${recent.map(t => `<tr><td class="id">${t.id}</td><td><span class="badge ${t.status}">${t.superseded_by ? "superseded→" + t.superseded_by : t.status}</span></td><td>${esc(t.project)}</td><td>${t.kind}</td><td>${ago(t.created_at)}</td><td>${money(t.cost_usd, t.cost_estimated, t.cost_unknown)}</td><td>${esc(t.title)}</td></tr>`).join("")}</table>` : `<span class="empty">none</span>`;
+    const running = all.filter(t => t.status === "running").length;
+    const failed = all.filter(t => t.status === "failed").length;
+    const superseded = all.filter(t => t.status === "superseded").length;
+    document.getElementById("status").textContent = `${running} running · ${needs.length} need you · ${failed} failed · ${superseded} superseded · refreshed ${new Date().toLocaleTimeString()}${today?.total ? ` · today ${money(today.total.usd, today.total.estimated, today.total.unknown)}${today.total.estimated > 0 ? ` (${today.total.estimated} est.)` : ""}` : ""}`;
+  } catch (e) {
+    document.getElementById("status").innerHTML = `<span class="err">${esc(e.message)}${!token ? " — open this page via `foreman dashboard` so it gets the token" : ""}</span>`;
+  }
+}
+refresh(); setInterval(refresh, 3000);
+</script>
+
+
+</body></html>

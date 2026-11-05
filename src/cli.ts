@@ -7,6 +7,7 @@ import { TaskdClient } from "./client";
 import { CONFIG_PATH, RUNS_DIR, ensureHome, loadConfig } from "./config";
 import { PIPELINES } from "./pipelines";
 import { prettyEvent } from "./pretty";
+import { fmtCost, fmtTaskCost } from "./costs";
 
 const argv = process.argv.slice(2);
 const invokedAs = process.env.FOREMAN_CLI_NAME ?? basename(process.argv[1] ?? "task");
@@ -40,6 +41,18 @@ const statusText = (t: any) => t.superseded_by ? `superseded→${t.superseded_by
 const etaText = (l: any) => l.eta_min != null ? ` eta ~${l.eta_min}m` : "";
 const expectText = (l: any) => l.expect_min != null ? ` expect ~${l.expect_min}m${l.expect_left_min != null ? ` (${l.expect_left_min}m left)` : ""}` : "";
 const holderText = (h: any) => h ? `${h.task_id}/${h.step}#${h.attempt} for ${ago(h.since)}${h.reason ? ` (${h.reason})` : ""}` : "nobody";
+function todayFooter(body: any, project?: string): string {
+  const part = (c: any) => {
+    const e = c?.estimated ?? 0, u = c?.unknown ?? 0;
+    const notes = [e > 0 ? `${e} estimated` : "", u > 0 ? `${u} unknown` : ""].filter(Boolean).join(", ");
+    return fmtTaskCost(c?.usd ?? 0, e, u) + (notes ? ` (${notes})` : "");
+  };
+  const projects = body?.projects ?? {};
+  if (project) return `today: ${part(projects[project])}`;
+  const each = Object.keys(projects).sort().map(n => `${n} ${part(projects[n])}`);
+  return ["today: " + part(body?.total), ...each].join(" · ");
+}
+
 const out = (data: unknown, text: () => string) => console.log(jsonOut ? JSON.stringify(data, null, 2) : text());
 
 const TASK_HELP = `task — Foreman task CLI
@@ -126,11 +139,15 @@ async function taskMain(): Promise<void> {
       if (opt("project")) q.set("project", opt("project")!);
       if (opt("status")) q.set("status", opt("status")!);
       const tasks: any[] = await client.get(`/tasks?${q}`);
+      let footer = "";
+      if (!jsonOut && tasks.length) {
+        try { footer = todayFooter(await client.get("/costs/today"), opt("project")); } catch { footer = ""; }
+      }
       out(tasks, () => {
         if (!tasks.length) return "no tasks";
         const w = Math.max(9, ...tasks.map(t => statusText(t).length));
-        const head = `${pad("ID", 6)} ${pad("STATUS", w)} ${pad("PROJECT", 14)} ${pad("KIND", 14)} ${pad("STEP", 14)} ${pad("AGE", 5)} ${pad("COST", 7)} ${pad("Q", 2)} TITLE`;
-        return [head, ...tasks.map(t => `${pad(t.id, 6)} ${pad(statusText(t), w)} ${pad(t.project, 14)} ${pad(t.kind, 14)} ${pad(t.current_step ?? "", 14)} ${pad(ago(t.created_at), 5)} ${pad("$" + t.cost_usd.toFixed(2), 7)} ${pad(t.open_blocks || "", 2)} ${t.title}`)].join("\n");
+        const head = `${pad("ID", 6)} ${pad("STATUS", w)} ${pad("PROJECT", 14)} ${pad("KIND", 14)} ${pad("STEP", 14)} ${pad("AGE", 5)} ${pad("COST", 8)} ${pad("Q", 2)} TITLE`;
+        return [head, ...tasks.map(t => `${pad(t.id, 6)} ${pad(statusText(t), w)} ${pad(t.project, 14)} ${pad(t.kind, 14)} ${pad(t.current_step ?? "", 14)} ${pad(ago(t.created_at), 5)} ${pad(fmtTaskCost(t.cost_usd, t.cost_estimated ?? 0, t.cost_unknown ?? 0), 8)} ${pad(t.open_blocks || "", 2)} ${t.title}`), ...(footer ? ["", footer] : [])].join("\n");
       });
       return;
     }
@@ -161,7 +178,7 @@ async function taskMain(): Promise<void> {
           "steps:",
           ...d.steps.map((s: any) => {
             const r = s.result ? JSON.parse(s.result) : null;
-            return `  ${pad(s.name, 14)} #${s.attempt} ${pad(s.status, 8)} ${pad(s.role, 13)} ${pad(ago(s.started_at), 5)} $${s.cost_usd.toFixed(2)} ${s.turns}t${r?.verdict && r.verdict !== "n/a" ? " verdict=" + r.verdict : ""}${s.error ? " error: " + s.error : ""}${s.tab_id ? " tab=" + s.tab_id : ""}${s.status === "running" && s.timeout_min ? ` budget=${s.timeout_min}min` : ""}` +
+            return `  ${pad(s.name, 14)} #${s.attempt} ${pad(s.status, 8)} ${pad(s.role, 13)} ${pad(ago(s.started_at), 5)} ${fmtCost(s.cost_usd, { estimated: s.cost_estimated, unknown: s.cost_unknown })} ${s.cost_estimated ? "~" : ""}${s.turns}t${r?.verdict && r.verdict !== "n/a" ? " verdict=" + r.verdict : ""}${s.error ? " error: " + s.error : ""}${s.tab_id ? " tab=" + s.tab_id : ""}${s.status === "running" && s.timeout_min ? ` budget=${s.timeout_min}min` : ""}` +
               (s.status === "running" ? (s.runner_seen_at ? `\n      runner seen ${ago(s.runner_seen_at)} ago` : `\n      runner not seen yet (launch started ${ago(s.launch_started_at ?? s.started_at)} ago)`) : "") +
               (r?.summary ? `\n      ${r.summary.replace(/\n/g, "\n      ")}` : "");
           }),
@@ -392,7 +409,7 @@ async function foremanMain(): Promise<void> {
           for (const t of active) {
             const d = await c.get(`/tasks/${t.id}`);
             const running = d.steps.filter((s: any) => s.status === "running").map((s: any) => `${s.name} ${ago(s.started_at)}`).join(", ");
-            lines.push(`${t.id} ${pad(t.status, 8)} ${pad(t.project, 14)} ${pad(t.current_step ?? "", 14)} $${t.cost_usd.toFixed(2)}  ${t.title}${running ? `  [${running}]` : ""}`);
+            lines.push(`${t.id} ${pad(t.status, 8)} ${pad(t.project, 14)} ${pad(t.current_step ?? "", 14)} ${fmtTaskCost(t.cost_usd, t.cost_estimated ?? 0, t.cost_unknown ?? 0)}  ${t.title}${running ? `  [${running}]` : ""}`);
             for (const b of d.blocks) lines.push(`      ? [${b.id}] ${b.question.split("\n")[0]}`);
             if (t.status === "gate") lines.push(`      ! waiting for approval at ${t.current_step}${t.gate_label ? ` (${t.gate_label})` : ""}`);
             if (t.rejection) lines.push(`      ~ rejected at ${JSON.parse(t.rejection).gate}, revising ${t.current_step ?? "-"}`);
@@ -400,7 +417,7 @@ async function foremanMain(): Promise<void> {
             for (const e of notes) lines.push(`      ${e.ts.slice(11, 16)} ${JSON.parse(e.data).text.split("\n")[0].slice(0, 110)}`);
           }
           const recent = all.filter(t => !active.includes(t)).slice(0, 6);
-          if (recent.length) { const w = Math.max(9, ...recent.map(t => statusText(t).length)); lines.push("", "recent:"); for (const t of recent) lines.push(`${t.id} ${pad(statusText(t), w)} ${pad(t.project, 14)} $${t.cost_usd.toFixed(2)}  ${t.title}`); }
+          if (recent.length) { const w = Math.max(9, ...recent.map(t => statusText(t).length)); lines.push("", "recent:"); for (const t of recent) lines.push(`${t.id} ${pad(statusText(t), w)} ${pad(t.project, 14)} ${fmtTaskCost(t.cost_usd, t.cost_estimated ?? 0, t.cost_unknown ?? 0)}  ${t.title}`); }
           body = lines.join("\n");
         } catch (e: any) { body = `taskd unreachable: ${e.message}`; }
         process.stdout.write("\x1b[2J\x1b[H" + body + "\n");

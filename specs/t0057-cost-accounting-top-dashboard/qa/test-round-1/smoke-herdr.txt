@@ -1,0 +1,15 @@
+14:01  up 10 days,  4:12, 4 users, load averages: 12.20 79.38 104.90
+device lane
+  task leases shows the lane
+happy path
+  T0001 -> done
+block/answer/resume
+  T0002 -> blocked
+  T0002 -> done
+crash/retry
+  T0003 expected done, got failed
+test/smoke.sh: line 61: 28470 Terminated: 15          FAKE_LINEAR_PORT=7779 FAKE_LINEAR_LOG="$T/linear.log" bun "$ROOT/test/fake-linear.ts" >> "$T/linear-server.log" 2>&1
+test/smoke.sh: line 61: 28471 Terminated: 15          FOREMAN_HOME="$T" FOREMAN_CLAUDE_BIN="$ROOT/test/fake-claude.sh" FOREMAN_GH_BIN="$ROOT/test/fake-gh.sh" FOREMAN_LINEAR_URL=http://127.0.0.1:7779 "$ROOT/bin/foreman" taskd >> "$T/taskd.log" 2>&1
+logs: /var/folders/7w/1mrvd9812138hkj9ndncqcvh0000gn/T//foreman-smoke-28382
+exit 1
+14:03  up 10 days,  4:14, 4 users, load averages: 23.84 60.45 93.43

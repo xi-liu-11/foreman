@@ -55,6 +55,9 @@ export interface StepRow {
   launch_started_at: string | null; // tryLaunch marked it running (null: launched before T0054)
   launched_at: string | null;       // the herdr tab (or fallback process) is up
   runner_seen_at: string | null;    // last heartbeat from the runner (null: never checked in)
+  session_cost_usd: number | null; // cumulative Claude session cost after this attempt; cost_usd is this attempt's delta
+  cost_estimated: number;  // 1: cost_usd and turns were estimated from the session log (no result event)
+  cost_unknown: number;    // 1: no result and no session log; cost_usd is 0 but not known to be 0
   created_at: string;
 }
 
@@ -107,6 +110,9 @@ export interface LeaseRow {
 // A lease row with what the grant policy ranks on.
 export interface LeaseWaiterRow extends LeaseRow { step: string; qa_cycles: number }
 
+// Step cost totals of one project over a time range.
+export interface CostTotals { usd: number; estimated: number; unknown: number; steps: number }
+
 // A queued step with what the dispatch policy ranks on.
 export interface QueuedStepRow extends StepRow { priority: number; qa_cycles: number }
 
@@ -143,6 +149,7 @@ CREATE TABLE IF NOT EXISTS steps (
   cost_usd REAL NOT NULL DEFAULT 0, turns INTEGER NOT NULL DEFAULT 0,
   timeout_min INTEGER,
   launch_started_at TEXT, launched_at TEXT, runner_seen_at TEXT,
+  session_cost_usd REAL, cost_estimated INTEGER NOT NULL DEFAULT 0, cost_unknown INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS steps_task ON steps(task_id, name);
@@ -204,6 +211,36 @@ export class Store {
     if (!cols.has("rejection")) this.db.exec("ALTER TABLE tasks ADD COLUMN rejection TEXT");
     const leaseCols = new Set((this.db.query("PRAGMA table_info(resource_leases)").all() as { name: string }[]).map(c => c.name));
     if (!leaseCols.has("expect_min")) this.db.exec("ALTER TABLE resource_leases ADD COLUMN expect_min INTEGER");
+    if (!stepCols.has("session_cost_usd")) this.db.exec("ALTER TABLE steps ADD COLUMN session_cost_usd REAL");
+    if (!stepCols.has("cost_estimated")) this.db.exec("ALTER TABLE steps ADD COLUMN cost_estimated INTEGER NOT NULL DEFAULT 0");
+    if (!stepCols.has("cost_unknown")) this.db.exec("ALTER TABLE steps ADD COLUMN cost_unknown INTEGER NOT NULL DEFAULT 0");
+    this.migrateCostDeltas();
+  }
+
+  // One-off (T0055): cost_usd used to hold Claude's cumulative session cost, so
+  // resumed attempts double counted. Keep the old value in session_cost_usd and
+  // turn cost_usd into each attempt's delta within its session.
+  private migrateCostDeltas(): void {
+    const key = "migration:cost_deltas_v1";
+    if (this.db.query("SELECT 1 FROM meta WHERE key = ?").get(key)) return;
+    this.db.transaction(() => {
+      const total = () => (this.db.query("SELECT COALESCE(SUM(cost_usd), 0) s FROM steps").get() as { s: number }).s;
+      const before = total();
+      this.db.run("UPDATE steps SET session_cost_usd = cost_usd WHERE session_cost_usd IS NULL");
+      const shared = (this.db.query("SELECT session_id FROM steps WHERE session_id IS NOT NULL GROUP BY session_id HAVING COUNT(*) > 1").all() as { session_id: string }[]).map(r => r.session_id);
+      let rows = 0;
+      for (const sid of shared) {
+        let max = 0;
+        for (const st of this.db.query("SELECT id, cost_usd, session_cost_usd FROM steps WHERE session_id = ? ORDER BY id").all(sid) as { id: number; cost_usd: number; session_cost_usd: number }[]) {
+          const raw = st.session_cost_usd ?? 0;
+          const delta = Math.max(0, raw - max);
+          max = Math.max(max, raw);
+          if (delta !== st.cost_usd) { this.db.run("UPDATE steps SET cost_usd = ? WHERE id = ?", [delta, st.id]); rows++; }
+        }
+      }
+      this.event("costs.migrated", { rows, sessions: shared.length, before, after: total() });
+      this.db.run("INSERT INTO meta (key, value) VALUES (?, ?)", [key, now()]);
+    })();
   }
 
   event(type: string, data: Record<string, unknown> = {}, task_id: string | null = null, step_id: number | null = null): void {
@@ -273,6 +310,17 @@ export class Store {
     if (!keys.length) return;
     const sets = keys.map(k => `${k} = ?`).join(", ");
     this.db.run(`UPDATE steps SET ${sets} WHERE id = ?`, [...keys.map(k => (patch as any)[k]), id]);
+  }
+  // The cumulative session cost recorded by earlier attempts of a session. MAX,
+  // not the latest: a killed attempt with an unknown cost cannot lower it.
+  prevSessionCost(session_id: string, before_id: number): number {
+    return (this.db.query("SELECT COALESCE(MAX(session_cost_usd), 0) m FROM steps WHERE session_id = ? AND id < ?").get(session_id, before_id) as { m: number }).m;
+  }
+  // Step costs by project for steps finished in [fromIso, toIso).
+  costsBetween(fromIso: string, toIso: string): ({ project: string } & CostTotals)[] {
+    return this.db.query(`SELECT t.project AS project, COALESCE(SUM(s.cost_usd), 0) AS usd, COALESCE(SUM(s.cost_estimated), 0) AS estimated,
+      COALESCE(SUM(s.cost_unknown), 0) AS unknown, COUNT(*) AS steps FROM steps s JOIN tasks t ON t.id = s.task_id
+      WHERE s.finished_at >= ? AND s.finished_at < ? GROUP BY t.project ORDER BY t.project`).all(fromIso, toIso) as ({ project: string } & CostTotals)[];
   }
   runningSteps(): StepRow[] {
     return this.db.query("SELECT * FROM steps WHERE status = 'running'").all() as StepRow[];

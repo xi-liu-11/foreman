@@ -7,10 +7,21 @@ import { TaskdClient } from "./client";
 import { REPO_ROOT, RUNS_DIR } from "./config";
 import { WORKER_RESULT_SCHEMA } from "./schema";
 import { prettyEvent } from "./pretty";
+import { sessionLogPath, sessionUsage, type Usage } from "./costs";
 
 interface StepContext {
   step: any; task: any; project: any; defaults: any; deny: string[];
   prompt_vars: Record<string, string>; step_prompt: string;
+}
+
+// Token usage of a run that ended without a result event, read from its
+// session log on this machine (taskd cannot read a remote machine's logs).
+// Best-effort: null when the log is missing or unreadable.
+export function killUsage(cwd: string, sessionId: string, from: string, to: string): Usage | null {
+  try {
+    const path = sessionLogPath(cwd, sessionId);
+    return path ? sessionUsage(path, { from, to }) : null;
+  } catch { return null; }
 }
 
 function fill(template: string, vars: Record<string, string>): string {
@@ -97,6 +108,7 @@ export async function runStep(stepId: number): Promise<void> {
     FOREMAN_TASK: task.id, FOREMAN_STEP: String(step.id),
     FOREMAN_RUN_DIR: runDir,
   };
+  const startedAt = new Date().toISOString();
   const proc = Bun.spawn(args, { cwd, env, stdout: "pipe", stderr: "pipe", stdin: new Blob([userPrompt]) });
 
   const transcript = join(runDir, "transcript.jsonl");
@@ -146,6 +158,7 @@ export async function runStep(stepId: number): Promise<void> {
     result: resultEvent,
     stderr_tail: existsSync(stderrLog) ? readFileSync(stderrLog, "utf8").slice(-2000) : "",
     run_dir: runDir,
+    usage: !resultEvent && sessionId ? killUsage(cwd, sessionId, startedAt, new Date().toISOString()) : null,
   };
   writeFileSync(join(runDir, "report.json"), JSON.stringify(report, null, 2));
 

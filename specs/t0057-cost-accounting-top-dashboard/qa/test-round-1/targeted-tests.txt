@@ -1,0 +1,421 @@
+bun test v1.4.4 (38afee6c8)
+
+test/cost-accounting.test.ts:
+03:59:22 result CA1/implement#1: failed (x)
+03:59:22 result CA1/implement#2: failed (x)
+03:59:22 result CA1/implement#3: failed (x)
+03:59:22 result CA2/implement#1: failed (x)
+03:59:22 result CA2/implement#2: failed (timeout after 90 min)
+03:59:22 result CA2/implement#3: failed (x)
+03:59:22 result CA3/implement#1: failed (x)
+03:59:22 result CA3/implement#2: failed (timeout after 90 min)
+03:59:22 result CA3/implement#3: failed (x)
+03:59:22 result CA4/implement#1: failed (timeout after 90 min)
+03:59:22 result CA5/implement#1: failed (timeout after 90 min)
+03:59:22 result CA5/implement#2: failed (timeout after 90 min)
+03:59:22 cost unknown for CA5/implement#3: no price for gpt-9
+03:59:22 result CA5/implement#3: failed (timeout after 90 min)
+03:59:22 lease expired for CA6/implement#1: lease expired: runner stopped heartbeating
+03:59:22 lease expired for CA7/implement#1: lease expired: runner stopped heartbeating
+03:59:22 lease expired for CA8/implement#1: lease expired: runner stopped heartbeating
+03:59:23 failed CA1: step 'implement' failed 3 times: x
+03:59:23 failed CA2: step 'implement' failed 3 times: x
+03:59:23 failed CA3: step 'implement' failed 3 times: x
+03:59:23 failed CA5: step 'implement' failed 3 times: timeout after 90 min
+03:59:23 result CA9/implement#1: failed (x)
+03:59:23 lease expired for CA9/implement#2; applying the result event from transcript.jsonl
+03:59:23 result CA9/implement#2: failed (x)
+03:59:23 lease expired for CA10/implement#1: runner never started: no check-in within 150s of launch (launch took 60s)
+
+test/step-timeouts.test.ts:
+03:59:23 advance CA4 failed: project 'cost-acc' is no longer in config.toml
+03:59:23 advance CA6 failed: project 'cost-acc' is no longer in config.toml
+03:59:23 advance CA7 failed: project 'cost-acc' is no longer in config.toml
+03:59:23 advance CA8 failed: project 'cost-acc' is no longer in config.toml
+03:59:23 advance CA9 failed: project 'cost-acc' is no longer in config.toml
+03:59:23 advance CA10 failed: project 'cost-acc' is no longer in config.toml
+03:59:23 advance CA11 failed: project 'cost-acc' is no longer in config.toml
+03:59:23 advance CA12 failed: project 'cost-acc-2' is no longer in config.toml
+03:59:23 failed STO1: current step 'qa' is not in the pipeline
+03:59:36 result STO2/research#1: failed (timeout after 0.02 min)
+03:59:36 advance CA4 failed: project 'cost-acc' is no longer in config.toml
+03:59:36 advance CA6 failed: project 'cost-acc' is no longer in config.toml
+03:59:36 advance CA7 failed: project 'cost-acc' is no longer in config.toml
+03:59:36 advance CA8 failed: project 'cost-acc' is no longer in config.toml
+03:59:36 advance CA9 failed: project 'cost-acc' is no longer in config.toml
+03:59:36 advance CA10 failed: project 'cost-acc' is no longer in config.toml
+03:59:36 advance CA11 failed: project 'cost-acc' is no longer in config.toml
+03:59:36 advance CA12 failed: project 'cost-acc-2' is no longer in config.toml
+03:59:49 result STO3/research#1: failed (timeout after 0.04 min)
+
+test/result-recovery.test.ts:
+03:59:49 lease expired for RR1/plan#2; applying the result event from transcript.jsonl
+03:59:49 result RR1/plan#2: done
+03:59:49 advance CA4 failed: project 'cost-acc' is no longer in config.toml
+03:59:49 advance CA6 failed: project 'cost-acc' is no longer in config.toml
+03:59:49 advance CA7 failed: project 'cost-acc' is no longer in config.toml
+03:59:49 advance CA8 failed: project 'cost-acc' is no longer in config.toml
+03:59:49 advance CA9 failed: project 'cost-acc' is no longer in config.toml
+03:59:49 advance CA10 failed: project 'cost-acc' is no longer in config.toml
+03:59:49 advance CA11 failed: project 'cost-acc' is no longer in config.toml
+03:59:49 advance CA12 failed: project 'cost-acc-2' is no longer in config.toml
+03:59:49 advance STO2 failed: project 'sto-run' is no longer in config.toml
+03:59:49 advance STO3 failed: project 'sto-run' is no longer in config.toml
+03:59:49 lease expired for RR2/plan#2: lease expired: runner stopped heartbeating
+03:59:49 advance CA4 failed: project 'cost-acc' is no longer in config.toml
+03:59:49 advance CA6 failed: project 'cost-acc' is no longer in config.toml
+03:59:49 advance CA7 failed: project 'cost-acc' is no longer in config.toml
+03:59:49 advance CA8 failed: project 'cost-acc' is no longer in config.toml
+03:59:49 advance CA9 failed: project 'cost-acc' is no longer in config.toml
+03:59:49 advance CA10 failed: project 'cost-acc' is no longer in config.toml
+03:59:49 advance CA11 failed: project 'cost-acc' is no longer in config.toml
+03:59:49 advance CA12 failed: project 'cost-acc-2' is no longer in config.toml
+03:59:49 advance STO2 failed: project 'sto-run' is no longer in config.toml
+03:59:49 advance STO3 failed: project 'sto-run' is no longer in config.toml
+03:59:49 lease expired for RR3/plan#2: lease expired: runner stopped heartbeating
+03:59:49 advance CA4 failed: project 'cost-acc' is no longer in config.toml
+03:59:49 advance CA6 failed: project 'cost-acc' is no longer in config.toml
+03:59:49 advance CA7 failed: project 'cost-acc' is no longer in config.toml
+03:59:49 advance CA8 failed: project 'cost-acc' is no longer in config.toml
+03:59:49 advance CA9 failed: project 'cost-acc' is no longer in config.toml
+03:59:49 advance CA10 failed: project 'cost-acc' is no longer in config.toml
+03:59:49 advance CA11 failed: project 'cost-acc' is no longer in config.toml
+03:59:49 advance CA12 failed: project 'cost-acc-2' is no longer in config.toml
+03:59:49 advance STO2 failed: project 'sto-run' is no longer in config.toml
+03:59:49 advance STO3 failed: project 'sto-run' is no longer in config.toml
+03:59:49 lease expired for RR4/plan#2; applying report.json left by the runner
+03:59:49 result RR4/plan#2: done
+03:59:49 advance CA4 failed: project 'cost-acc' is no longer in config.toml
+03:59:49 advance CA6 failed: project 'cost-acc' is no longer in config.toml
+03:59:49 advance CA7 failed: project 'cost-acc' is no longer in config.toml
+03:59:49 advance CA8 failed: project 'cost-acc' is no longer in config.toml
+03:59:49 advance CA9 failed: project 'cost-acc' is no longer in config.toml
+03:59:49 advance CA10 failed: project 'cost-acc' is no longer in config.toml
+03:59:49 advance CA11 failed: project 'cost-acc' is no longer in config.toml
+03:59:49 advance CA12 failed: project 'cost-acc-2' is no longer in config.toml
+03:59:49 advance STO2 failed: project 'sto-run' is no longer in config.toml
+03:59:49 advance STO3 failed: project 'sto-run' is no longer in config.toml
+
+test/launch.test.ts:
+03:59:49 advance CA4 failed: project 'cost-acc' is no longer in config.toml
+03:59:49 advance CA6 failed: project 'cost-acc' is no longer in config.toml
+03:59:49 advance CA7 failed: project 'cost-acc' is no longer in config.toml
+03:59:49 advance CA8 failed: project 'cost-acc' is no longer in config.toml
+03:59:49 advance CA9 failed: project 'cost-acc' is no longer in config.toml
+03:59:49 advance CA10 failed: project 'cost-acc' is no longer in config.toml
+03:59:49 advance CA11 failed: project 'cost-acc' is no longer in config.toml
+03:59:49 advance CA12 failed: project 'cost-acc-2' is no longer in config.toml
+03:59:49 advance STO2 failed: project 'sto-run' is no longer in config.toml
+03:59:49 advance STO3 failed: project 'sto-run' is no longer in config.toml
+03:59:49 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+03:59:49 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+03:59:49 advance CA4 failed: project 'cost-acc' is no longer in config.toml
+03:59:49 advance CA6 failed: project 'cost-acc' is no longer in config.toml
+03:59:49 advance CA7 failed: project 'cost-acc' is no longer in config.toml
+03:59:49 advance CA8 failed: project 'cost-acc' is no longer in config.toml
+03:59:49 advance CA9 failed: project 'cost-acc' is no longer in config.toml
+03:59:49 advance CA10 failed: project 'cost-acc' is no longer in config.toml
+03:59:49 advance CA11 failed: project 'cost-acc' is no longer in config.toml
+03:59:49 advance CA12 failed: project 'cost-acc-2' is no longer in config.toml
+03:59:49 advance STO2 failed: project 'sto-run' is no longer in config.toml
+03:59:49 advance STO3 failed: project 'sto-run' is no longer in config.toml
+03:59:49 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+03:59:49 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+03:59:51 advance CA4 failed: project 'cost-acc' is no longer in config.toml
+03:59:51 advance CA6 failed: project 'cost-acc' is no longer in config.toml
+03:59:51 advance CA7 failed: project 'cost-acc' is no longer in config.toml
+03:59:51 advance CA8 failed: project 'cost-acc' is no longer in config.toml
+03:59:51 advance CA9 failed: project 'cost-acc' is no longer in config.toml
+03:59:51 advance CA10 failed: project 'cost-acc' is no longer in config.toml
+03:59:51 advance CA11 failed: project 'cost-acc' is no longer in config.toml
+03:59:51 advance CA12 failed: project 'cost-acc-2' is no longer in config.toml
+03:59:51 advance STO2 failed: project 'sto-run' is no longer in config.toml
+03:59:51 advance STO3 failed: project 'sto-run' is no longer in config.toml
+03:59:51 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+03:59:51 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+03:59:52 started LT1/plan#1 (herdr tab, launch took 2s)
+03:59:52 lease expired for LT2/plan#1: lease expired: runner stopped heartbeating
+03:59:52 advance CA4 failed: project 'cost-acc' is no longer in config.toml
+03:59:52 advance CA6 failed: project 'cost-acc' is no longer in config.toml
+03:59:52 advance CA7 failed: project 'cost-acc' is no longer in config.toml
+03:59:52 advance CA8 failed: project 'cost-acc' is no longer in config.toml
+03:59:52 advance CA9 failed: project 'cost-acc' is no longer in config.toml
+03:59:52 advance CA10 failed: project 'cost-acc' is no longer in config.toml
+03:59:52 advance CA11 failed: project 'cost-acc' is no longer in config.toml
+03:59:52 advance CA12 failed: project 'cost-acc-2' is no longer in config.toml
+03:59:52 advance STO2 failed: project 'sto-run' is no longer in config.toml
+03:59:52 advance STO3 failed: project 'sto-run' is no longer in config.toml
+03:59:52 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+03:59:52 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+03:59:52 advance CA4 failed: project 'cost-acc' is no longer in config.toml
+03:59:52 advance CA6 failed: project 'cost-acc' is no longer in config.toml
+03:59:52 advance CA7 failed: project 'cost-acc' is no longer in config.toml
+03:59:52 advance CA8 failed: project 'cost-acc' is no longer in config.toml
+03:59:52 advance CA9 failed: project 'cost-acc' is no longer in config.toml
+03:59:52 advance CA10 failed: project 'cost-acc' is no longer in config.toml
+03:59:52 advance CA11 failed: project 'cost-acc' is no longer in config.toml
+03:59:52 advance CA12 failed: project 'cost-acc-2' is no longer in config.toml
+03:59:52 advance STO2 failed: project 'sto-run' is no longer in config.toml
+03:59:52 advance STO3 failed: project 'sto-run' is no longer in config.toml
+03:59:52 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+03:59:52 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+03:59:54 started LT3/plan#1 (herdr tab, launch took 2s)
+03:59:54 advance CA4 failed: project 'cost-acc' is no longer in config.toml
+03:59:54 advance CA6 failed: project 'cost-acc' is no longer in config.toml
+03:59:54 advance CA7 failed: project 'cost-acc' is no longer in config.toml
+03:59:54 advance CA8 failed: project 'cost-acc' is no longer in config.toml
+03:59:54 advance CA9 failed: project 'cost-acc' is no longer in config.toml
+03:59:54 advance CA10 failed: project 'cost-acc' is no longer in config.toml
+03:59:54 advance CA11 failed: project 'cost-acc' is no longer in config.toml
+03:59:54 advance CA12 failed: project 'cost-acc-2' is no longer in config.toml
+03:59:54 advance STO2 failed: project 'sto-run' is no longer in config.toml
+03:59:54 advance STO3 failed: project 'sto-run' is no longer in config.toml
+03:59:54 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+03:59:54 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+03:59:54 advance CA4 failed: project 'cost-acc' is no longer in config.toml
+03:59:54 advance CA6 failed: project 'cost-acc' is no longer in config.toml
+03:59:54 advance CA7 failed: project 'cost-acc' is no longer in config.toml
+03:59:54 advance CA8 failed: project 'cost-acc' is no longer in config.toml
+03:59:54 advance CA9 failed: project 'cost-acc' is no longer in config.toml
+03:59:54 advance CA10 failed: project 'cost-acc' is no longer in config.toml
+03:59:54 advance CA11 failed: project 'cost-acc' is no longer in config.toml
+03:59:54 advance CA12 failed: project 'cost-acc-2' is no longer in config.toml
+03:59:54 advance STO2 failed: project 'sto-run' is no longer in config.toml
+03:59:54 advance STO3 failed: project 'sto-run' is no longer in config.toml
+03:59:54 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+03:59:54 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+03:59:55 lease expired for LT4/plan#1: runner never started: launch timed out after 1s
+03:59:55 advance CA4 failed: project 'cost-acc' is no longer in config.toml
+03:59:55 advance CA6 failed: project 'cost-acc' is no longer in config.toml
+03:59:55 advance CA7 failed: project 'cost-acc' is no longer in config.toml
+03:59:55 advance CA8 failed: project 'cost-acc' is no longer in config.toml
+03:59:55 advance CA9 failed: project 'cost-acc' is no longer in config.toml
+03:59:55 advance CA10 failed: project 'cost-acc' is no longer in config.toml
+03:59:55 advance CA11 failed: project 'cost-acc' is no longer in config.toml
+03:59:55 advance CA12 failed: project 'cost-acc-2' is no longer in config.toml
+03:59:55 advance STO2 failed: project 'sto-run' is no longer in config.toml
+03:59:55 advance STO3 failed: project 'sto-run' is no longer in config.toml
+03:59:55 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+03:59:55 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+03:59:56 launch of LT4/plan#1 returned after the step stopped being live; closed the new tab
+03:59:56 advance CA4 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA6 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA7 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA8 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA9 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA10 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA11 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA12 failed: project 'cost-acc-2' is no longer in config.toml
+03:59:56 advance STO2 failed: project 'sto-run' is no longer in config.toml
+03:59:56 advance STO3 failed: project 'sto-run' is no longer in config.toml
+03:59:56 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+03:59:56 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+03:59:56 advance CA4 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA6 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA7 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA8 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA9 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA10 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA11 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA12 failed: project 'cost-acc-2' is no longer in config.toml
+03:59:56 advance STO2 failed: project 'sto-run' is no longer in config.toml
+03:59:56 advance STO3 failed: project 'sto-run' is no longer in config.toml
+03:59:56 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+03:59:56 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+03:59:56 advance CA4 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA6 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA7 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA8 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA9 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA10 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA11 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA12 failed: project 'cost-acc-2' is no longer in config.toml
+03:59:56 advance STO2 failed: project 'sto-run' is no longer in config.toml
+03:59:56 advance STO3 failed: project 'sto-run' is no longer in config.toml
+03:59:56 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+03:59:56 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+03:59:56 failed LT5: step 'plan' could not start a runner 3 times: runner never started: herdr tab create failed (1): boom
+03:59:56 advance CA4 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA6 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA7 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA8 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA9 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA10 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA11 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA12 failed: project 'cost-acc-2' is no longer in config.toml
+03:59:56 advance STO2 failed: project 'sto-run' is no longer in config.toml
+03:59:56 advance STO3 failed: project 'sto-run' is no longer in config.toml
+03:59:56 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+03:59:56 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+03:59:56 advance CA4 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA6 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA7 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA8 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA9 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA10 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA11 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA12 failed: project 'cost-acc-2' is no longer in config.toml
+03:59:56 advance STO2 failed: project 'sto-run' is no longer in config.toml
+03:59:56 failed STO3: step 'research' failed 1 times: timeout after 0.04 min
+03:59:56 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+03:59:56 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+03:59:56 launch failed for LT7/plan#1: herdr tab create --workspace w1 --cwd /private/var/folders/7w/1mrvd9812138hkj9ndncqcvh0000gn/T/fm-launch-home-8T2aDu --label LT7 plan --no-focus --env FOREMAN_URL=http://127.0.0.1:7777 --env FOREMAN_TOKEN=0091ac9ec8914a528b166b504c559913 --env FOREMAN_TASK=LT7 --env FOREMAN_STEP=58 --env FOREMAN_STEP_NAME=plan --env FOREMAN_HOME=/private/var/folders/7w/1mrvd9812138hkj9ndncqcvh0000gn/T/fm-launch-home-8T2aDu failed (1): boom
+03:59:56 advance CA4 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA6 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA7 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA8 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA9 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA10 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA11 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA12 failed: project 'cost-acc-2' is no longer in config.toml
+03:59:56 advance STO2 failed: project 'sto-run' is no longer in config.toml
+03:59:56 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+03:59:56 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+03:59:56 advance CA4 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA6 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA7 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA8 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA9 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA10 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA11 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA12 failed: project 'cost-acc-2' is no longer in config.toml
+03:59:56 advance STO2 failed: project 'sto-run' is no longer in config.toml
+03:59:56 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+03:59:56 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+03:59:56 advance CA4 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA6 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA7 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA8 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA9 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA10 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA11 failed: project 'cost-acc' is no longer in config.toml
+03:59:56 advance CA12 failed: project 'cost-acc-2' is no longer in config.toml
+03:59:56 advance STO2 failed: project 'sto-run' is no longer in config.toml
+03:59:56 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+03:59:56 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+03:59:57 started LT8/plan#1 (herdr tab, launch took 1s)
+03:59:57 advance CA4 failed: project 'cost-acc' is no longer in config.toml
+03:59:57 advance CA6 failed: project 'cost-acc' is no longer in config.toml
+03:59:57 advance CA7 failed: project 'cost-acc' is no longer in config.toml
+03:59:57 advance CA8 failed: project 'cost-acc' is no longer in config.toml
+03:59:57 advance CA9 failed: project 'cost-acc' is no longer in config.toml
+03:59:57 advance CA10 failed: project 'cost-acc' is no longer in config.toml
+03:59:57 advance CA11 failed: project 'cost-acc' is no longer in config.toml
+03:59:57 advance CA12 failed: project 'cost-acc-2' is no longer in config.toml
+03:59:57 advance STO2 failed: project 'sto-run' is no longer in config.toml
+03:59:57 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+03:59:57 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+03:59:59 lease expired for LT8/plan#1: lease expired: runner stopped heartbeating
+03:59:59 advance CA4 failed: project 'cost-acc' is no longer in config.toml
+03:59:59 advance CA6 failed: project 'cost-acc' is no longer in config.toml
+03:59:59 advance CA7 failed: project 'cost-acc' is no longer in config.toml
+03:59:59 advance CA8 failed: project 'cost-acc' is no longer in config.toml
+03:59:59 advance CA9 failed: project 'cost-acc' is no longer in config.toml
+03:59:59 advance CA10 failed: project 'cost-acc' is no longer in config.toml
+03:59:59 advance CA11 failed: project 'cost-acc' is no longer in config.toml
+03:59:59 advance CA12 failed: project 'cost-acc-2' is no longer in config.toml
+03:59:59 advance STO2 failed: project 'sto-run' is no longer in config.toml
+03:59:59 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+03:59:59 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+03:59:59 failed LT8: step 'plan' failed 1 times: lease expired: runner stopped heartbeating
+03:59:59 advance CA4 failed: project 'cost-acc' is no longer in config.toml
+03:59:59 advance CA6 failed: project 'cost-acc' is no longer in config.toml
+03:59:59 advance CA7 failed: project 'cost-acc' is no longer in config.toml
+03:59:59 advance CA8 failed: project 'cost-acc' is no longer in config.toml
+03:59:59 advance CA9 failed: project 'cost-acc' is no longer in config.toml
+03:59:59 advance CA10 failed: project 'cost-acc' is no longer in config.toml
+03:59:59 advance CA11 failed: project 'cost-acc' is no longer in config.toml
+03:59:59 advance CA12 failed: project 'cost-acc-2' is no longer in config.toml
+03:59:59 advance STO2 failed: project 'sto-run' is no longer in config.toml
+03:59:59 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+03:59:59 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+03:59:59 started LT9/plan#1 (herdr tab, launch took 0s)
+03:59:59 advance CA4 failed: project 'cost-acc' is no longer in config.toml
+03:59:59 advance CA6 failed: project 'cost-acc' is no longer in config.toml
+03:59:59 advance CA7 failed: project 'cost-acc' is no longer in config.toml
+03:59:59 advance CA8 failed: project 'cost-acc' is no longer in config.toml
+03:59:59 advance CA9 failed: project 'cost-acc' is no longer in config.toml
+03:59:59 advance CA10 failed: project 'cost-acc' is no longer in config.toml
+03:59:59 advance CA11 failed: project 'cost-acc' is no longer in config.toml
+03:59:59 advance CA12 failed: project 'cost-acc-2' is no longer in config.toml
+03:59:59 advance STO2 failed: project 'sto-run' is no longer in config.toml
+03:59:59 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+03:59:59 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+04:00:00 lease expired for LT9/plan#1: runner never started: no check-in within 1s of launch (launch took 0s)
+04:00:00 advance CA4 failed: project 'cost-acc' is no longer in config.toml
+04:00:00 advance CA6 failed: project 'cost-acc' is no longer in config.toml
+04:00:00 advance CA7 failed: project 'cost-acc' is no longer in config.toml
+04:00:00 advance CA8 failed: project 'cost-acc' is no longer in config.toml
+04:00:00 advance CA9 failed: project 'cost-acc' is no longer in config.toml
+04:00:00 advance CA10 failed: project 'cost-acc' is no longer in config.toml
+04:00:00 advance CA11 failed: project 'cost-acc' is no longer in config.toml
+04:00:00 advance CA12 failed: project 'cost-acc-2' is no longer in config.toml
+04:00:00 advance STO2 failed: project 'sto-run' is no longer in config.toml
+04:00:00 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+04:00:00 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+04:00:00 advance CA4 failed: project 'cost-acc' is no longer in config.toml
+04:00:00 advance CA6 failed: project 'cost-acc' is no longer in config.toml
+04:00:00 advance CA7 failed: project 'cost-acc' is no longer in config.toml
+04:00:00 advance CA8 failed: project 'cost-acc' is no longer in config.toml
+04:00:00 advance CA9 failed: project 'cost-acc' is no longer in config.toml
+04:00:00 advance CA10 failed: project 'cost-acc' is no longer in config.toml
+04:00:00 advance CA11 failed: project 'cost-acc' is no longer in config.toml
+04:00:00 advance CA12 failed: project 'cost-acc-2' is no longer in config.toml
+04:00:00 advance STO2 failed: project 'sto-run' is no longer in config.toml
+04:00:00 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+04:00:00 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+04:00:01 launch failed for LT10/plan#1: herdr tab create timed out after 1s
+04:00:01 advance CA4 failed: project 'cost-acc' is no longer in config.toml
+04:00:01 advance CA6 failed: project 'cost-acc' is no longer in config.toml
+04:00:01 advance CA7 failed: project 'cost-acc' is no longer in config.toml
+04:00:01 advance CA8 failed: project 'cost-acc' is no longer in config.toml
+04:00:01 advance CA9 failed: project 'cost-acc' is no longer in config.toml
+04:00:01 advance CA10 failed: project 'cost-acc' is no longer in config.toml
+04:00:01 advance CA11 failed: project 'cost-acc' is no longer in config.toml
+04:00:01 advance CA12 failed: project 'cost-acc-2' is no longer in config.toml
+04:00:01 advance STO2 failed: project 'sto-run' is no longer in config.toml
+04:00:01 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+04:00:01 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+04:00:02 advance CA4 failed: project 'cost-acc' is no longer in config.toml
+04:00:02 advance CA6 failed: project 'cost-acc' is no longer in config.toml
+04:00:02 advance CA7 failed: project 'cost-acc' is no longer in config.toml
+04:00:02 advance CA8 failed: project 'cost-acc' is no longer in config.toml
+04:00:02 advance CA9 failed: project 'cost-acc' is no longer in config.toml
+04:00:02 advance CA10 failed: project 'cost-acc' is no longer in config.toml
+04:00:02 advance CA11 failed: project 'cost-acc' is no longer in config.toml
+04:00:02 advance CA12 failed: project 'cost-acc-2' is no longer in config.toml
+04:00:02 advance STO2 failed: project 'sto-run' is no longer in config.toml
+04:00:02 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+04:00:02 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+
+test/stall.test.ts:
+04:00:02 tick gap 600s (host sleep or stall): extended 3 lease(s)
+04:00:02 advance CA4 failed: project 'cost-acc' is no longer in config.toml
+04:00:02 advance CA6 failed: project 'cost-acc' is no longer in config.toml
+04:00:02 advance CA7 failed: project 'cost-acc' is no longer in config.toml
+04:00:02 advance CA8 failed: project 'cost-acc' is no longer in config.toml
+04:00:02 advance CA9 failed: project 'cost-acc' is no longer in config.toml
+04:00:02 advance CA10 failed: project 'cost-acc' is no longer in config.toml
+04:00:02 advance CA11 failed: project 'cost-acc' is no longer in config.toml
+04:00:02 advance CA12 failed: project 'cost-acc-2' is no longer in config.toml
+04:00:02 advance STO2 failed: project 'sto-run' is no longer in config.toml
+04:00:02 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+04:00:02 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+04:00:02 lease expired for ST2/implement#1: lease expired: runner stopped heartbeating
+04:00:02 advance CA4 failed: project 'cost-acc' is no longer in config.toml
+04:00:02 advance CA6 failed: project 'cost-acc' is no longer in config.toml
+04:00:02 advance CA7 failed: project 'cost-acc' is no longer in config.toml
+04:00:02 advance CA8 failed: project 'cost-acc' is no longer in config.toml
+04:00:02 advance CA9 failed: project 'cost-acc' is no longer in config.toml
+04:00:02 advance CA10 failed: project 'cost-acc' is no longer in config.toml
+04:00:02 advance CA11 failed: project 'cost-acc' is no longer in config.toml
+04:00:02 advance CA12 failed: project 'cost-acc-2' is no longer in config.toml
+04:00:02 advance STO2 failed: project 'sto-run' is no longer in config.toml
+04:00:02 advance RR2 failed: project 'result-recovery' is no longer in config.toml
+04:00:02 advance RR3 failed: project 'result-recovery' is no longer in config.toml
+
+ 53 pass
+ 0 fail
+ 288 expect() calls
+Ran 53 tests across 6 files. [39.33s]
+exit 0

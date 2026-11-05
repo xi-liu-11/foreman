@@ -1,0 +1,7 @@
+money(4.3, 1, 0) = ~$4.30  expected ~$4.30  OK
+money(0, 0, 1) = $?  expected $?  OK
+money(3, 1, 0) = ~$3.00  expected ~$3.00  OK
+money(25.93, 0, 0) = $25.93  expected $25.93  OK
+money(2, 0, 1) = ~$2.00  expected ~$2.00  OK
+money(0, 0, 0) = $0.00  expected $0.00  OK
+header suffix:  · today ~$28.93 (1 est.)
